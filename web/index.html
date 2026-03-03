@@ -13,7 +13,7 @@
 </head>
 <body>
   <div id="app">
-    <!-- Token prompt overlay -->
+    <!-- Token overlay -->
     <div id="token-overlay" class="overlay hidden">
       <div class="overlay-card">
         <div class="overlay-icon">🔑</div>
@@ -24,21 +24,20 @@
       </div>
     </div>
 
-    <!-- Main layout -->
+    <!-- Sidebar -->
     <aside id="sidebar">
       <div class="sidebar-header">
         <div class="logo">
           <span class="logo-icon">⬡</span>
           <span class="logo-text">LanPane</span>
         </div>
-        <button id="new-pane-btn" title="New Pane">
+        <button id="new-pane-btn" title="New Pane (Ctrl+N)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
       </div>
-
       <div class="pane-list" id="pane-list"></div>
-
       <div class="sidebar-footer">
+        <div id="hub-token-area"></div>
         <div class="device-list" id="device-list"></div>
         <div class="status-bar" id="status-bar">
           <span class="status-dot"></span>
@@ -47,35 +46,72 @@
       </div>
     </aside>
 
+    <!-- Main content -->
     <main id="main-content">
       <div id="empty-state" class="empty-state">
         <div class="empty-icon">⬡</div>
         <h2>No pane selected</h2>
         <p>Create a new pane or select one from the sidebar.<br>Paste images or drop files anywhere.</p>
         <div class="shortcut-hints">
-          <kbd>Ctrl+V</kbd> paste image &nbsp; <kbd>Drop</kbd> files
+          <kbd>Ctrl+N</kbd> new pane &nbsp; <kbd>Ctrl+V</kbd> paste image &nbsp; <kbd>Drop</kbd> files
         </div>
       </div>
 
-      <div id="pane-editor" class="pane-editor hidden">
-        <div class="pane-header">
-          <input type="text" id="pane-name" class="pane-name-input" placeholder="Untitled pane" spellcheck="false">
-          <div class="pane-actions">
-            <button id="add-text-block" class="icon-btn" title="Add text block">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            </button>
-            <button id="add-code-block" class="icon-btn" title="Add code block">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            </button>
-            <button id="delete-pane-btn" class="icon-btn danger" title="Delete pane">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
+      <div id="pane-view" class="pane-view hidden">
+        <!-- Sticky toolbar -->
+        <div class="pane-toolbar">
+          <input type="text" id="pane-name" class="pane-name-input" placeholder="Untitled" spellcheck="false">
+          <div class="toolbar-sep"></div>
+          <div class="mode-switch">
+            <button class="mode-btn" data-mode="code" title="Code mode">CODE</button>
+            <button class="mode-btn" data-mode="markdown" title="Markdown mode">MD</button>
           </div>
+          <select id="lang-select" class="lang-select">
+            <option value="plaintext">plaintext</option>
+            <option value="javascript">javascript</option>
+            <option value="typescript">typescript</option>
+            <option value="python">python</option>
+            <option value="go">go</option>
+            <option value="rust">rust</option>
+            <option value="java">java</option>
+            <option value="kotlin">kotlin</option>
+            <option value="c">c</option>
+            <option value="cpp">cpp</option>
+            <option value="csharp">csharp</option>
+            <option value="html">html</option>
+            <option value="css">css</option>
+            <option value="json">json</option>
+            <option value="yaml">yaml</option>
+            <option value="xml">xml</option>
+            <option value="sql">sql</option>
+            <option value="bash">bash</option>
+            <option value="swift">swift</option>
+            <option value="ruby">ruby</option>
+            <option value="php">php</option>
+            <option value="dart">dart</option>
+            <option value="dockerfile">dockerfile</option>
+            <option value="makefile">makefile</option>
+            <option value="toml">toml</option>
+          </select>
+          <div class="toolbar-spacer"></div>
+          <button id="copy-btn" class="tool-btn" title="Copy content">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button id="delete-btn" class="tool-btn danger" title="Delete pane">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
         </div>
-        <div class="blocks-container" id="blocks-container"></div>
+
+        <!-- Content area -->
+        <div class="pane-content">
+          <textarea id="editor" class="editor" placeholder="Start typing..." spellcheck="false"></textarea>
+          <div id="preview" class="preview hidden"></div>
+        </div>
       </div>
     </main>
   </div>
+
+  <div class="copy-toast" id="toast"></div>
   <script src="app.js"></script>
 </body>
 </html>

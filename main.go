@@ -28,7 +28,6 @@ func main() {
 	node.Start()
 
 	handler := SetupHTTP(node)
-
 	setupSSE(node, handler.(*http.ServeMux))
 
 	url := fmt.Sprintf("http://localhost:%d", *port)
@@ -36,12 +35,13 @@ func main() {
 	fmt.Println("  ╭─────────────────────────────────────────╮")
 	fmt.Println("  │              L A N P A N E              │")
 	fmt.Println("  ├─────────────────────────────────────────┤")
-	if node.role == "hub" {
+	role := node.GetRole()
+	if role == "hub" {
 		fmt.Printf("  │  Role:  HUB                             │\n")
 		fmt.Printf("  │  Code:  %-6s                           │\n", node.token)
 	} else {
 		fmt.Printf("  │  Role:  SPOKE                           │\n")
-		fmt.Printf("  │  Hub:   %-20s          │\n", node.hubAddr)
+		fmt.Printf("  │  Hub:   %-33s│\n", node.hubAddr)
 	}
 	fmt.Printf("  │  Open:  %-33s│\n", url)
 	fmt.Printf("  │  OS:    %-10s                        │\n", runtime.GOOS)
@@ -55,7 +55,6 @@ func main() {
 	go func() {
 		<-sigCh
 		fmt.Println("\nshutting down...")
-		close(node.stopCh)
 		srv.Close()
 	}()
 
@@ -74,41 +73,35 @@ func setupSSE(node *Node, mux *http.ServeMux) {
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		lastVersion := int64(0)
-		lastDevCount := 0
+		ch := node.subscribeSSE()
+		defer node.unsubscribeSSE(ch)
+
+		// Send initial state immediately
+		sendSSEState(w, flusher, node)
+
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			default:
-			}
-			panes := node.store.GetPanes()
-			devices := node.getDevices()
-
-			currentVersion := int64(0)
-			for _, p := range panes {
-				if p.Version > currentVersion {
-					currentVersion = p.Version
-				}
-			}
-
-			if currentVersion != lastVersion || len(devices) != lastDevCount {
-				lastVersion = currentVersion
-				lastDevCount = len(devices)
-				data := map[string]interface{}{
-					"panes":   panes,
-					"devices": devices,
-				}
-				jsonData, _ := json.Marshal(data)
-				fmt.Fprintf(w, "data: %s\n\n", jsonData)
+			case <-ch:
+				sendSSEState(w, flusher, node)
+			case <-time.After(15 * time.Second):
+				// Heartbeat to detect dead connections
+				fmt.Fprintf(w, ": heartbeat\n\n")
 				flusher.Flush()
-			}
-
-			select {
-			case <-r.Context().Done():
-				return
-			case <-time.After(500 * time.Millisecond):
 			}
 		}
 	})
+}
+
+func sendSSEState(w http.ResponseWriter, flusher http.Flusher, node *Node) {
+	data := map[string]interface{}{
+		"panes":   node.store.GetPanes(),
+		"devices": node.getDevices(),
+		"role":    node.GetRole(),
+		"token":   node.token,
+	}
+	jsonData, _ := json.Marshal(data)
+	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	flusher.Flush()
 }

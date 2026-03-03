@@ -10,81 +10,88 @@ import (
 
 const (
 	DiscoveryPort = 7754
-	MagicHeader   = "LANPANE"
+	MagicHeader   = "LANPANE1"
 )
 
 type DiscoveryMsg struct {
-	Magic    string `json:"magic"`
-	Type     string `json:"type"` // "discover" or "hub"
-	DeviceID string `json:"deviceId"`
-	Port     int    `json:"port"`
-	Name     string `json:"name"`
+	Magic    string `json:"m"`
+	Type     string `json:"t"` // "seek", "hub", "hub_announce"
+	DeviceID string `json:"d"`
+	Port     int    `json:"p"`
+	IP       string `json:"i,omitempty"`
 }
 
 // DiscoverHub sends UDP broadcasts and waits for a hub response.
-// Returns hub address (ip:port) or empty string if no hub found.
-func DiscoverHub(deviceID string, timeout time.Duration) (string, error) {
+func DiscoverHub(deviceID string, timeout time.Duration) (string, string, error) {
 	conn, err := net.ListenPacket("udp4", ":0")
 	if err != nil {
-		return "", fmt.Errorf("listen udp: %w", err)
+		return "", "", err
 	}
 	defer conn.Close()
 
-	msg := DiscoveryMsg{
-		Magic:    MagicHeader,
-		Type:     "discover",
-		DeviceID: deviceID,
-	}
+	msg := DiscoveryMsg{Magic: MagicHeader, Type: "seek", DeviceID: deviceID}
 	data, _ := json.Marshal(msg)
 
-	broadcast := &net.UDPAddr{IP: net.IPv4bcast, Port: DiscoveryPort}
-	_, err = conn.WriteTo(data, broadcast)
-	if err != nil {
-		// Try all interfaces if broadcast fails
-		ifaces, _ := net.Interfaces()
-		for _, iface := range ifaces {
-			addrs, _ := iface.Addrs()
-			for _, addr := range addrs {
-				if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-					bcast := broadcastAddr(ipnet)
-					conn.WriteTo(data, &net.UDPAddr{IP: bcast, Port: DiscoveryPort})
-				}
-			}
-		}
-	}
+	broadcastAll(conn, data)
 
 	conn.SetReadDeadline(time.Now().Add(timeout))
 	buf := make([]byte, 1024)
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
-			return "", nil // timeout, no hub found
+			return "", "", nil // timeout
 		}
 		var resp DiscoveryMsg
-		if err := json.Unmarshal(buf[:n], &resp); err != nil {
+		if err := json.Unmarshal(buf[:n], &resp); err != nil || resp.Magic != MagicHeader {
 			continue
 		}
-		if resp.Magic == MagicHeader && resp.Type == "hub" && resp.DeviceID != deviceID {
-			// Extract the source IP from the response
-			return fmt.Sprintf("%s:%d", resp.Name, resp.Port), nil
+		if resp.Type == "hub" && resp.DeviceID != deviceID {
+			host, _, _ := net.SplitHostPort(addr.String())
+			hubAddr := net.JoinHostPort(host, fmt.Sprintf("%d", resp.Port))
+			return hubAddr, resp.DeviceID, nil
 		}
 	}
 }
 
-// RunDiscoveryListener listens for discovery broadcasts and responds as hub.
-func RunDiscoveryListener(deviceID string, httpPort int, stopCh <-chan struct{}) {
-	addr := &net.UDPAddr{Port: DiscoveryPort}
-	conn, err := net.ListenPacket("udp4", addr.String())
+func broadcastAll(conn net.PacketConn, data []byte) {
+	globalBcast := &net.UDPAddr{IP: net.IPv4bcast, Port: DiscoveryPort}
+	conn.WriteTo(data, globalBcast)
+
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagBroadcast == 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
+				bcast := broadcastAddr(ipnet)
+				conn.WriteTo(data, &net.UDPAddr{IP: bcast, Port: DiscoveryPort})
+			}
+		}
+	}
+}
+
+// RunDiscoveryListener listens for broadcasts and responds as hub.
+// Sends collision events when another hub is detected.
+func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- DiscoveryMsg, stopCh <-chan struct{}) {
+	var conn net.PacketConn
+	var err error
+	for attempts := 0; attempts < 5; attempts++ {
+		conn, err = net.ListenPacket("udp4", fmt.Sprintf(":%d", DiscoveryPort))
+		if err == nil {
+			break
+		}
+		log.Printf("[discovery] port %d busy, retry %d/5...", DiscoveryPort, attempts+1)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		log.Printf("[discovery] failed to listen on port %d: %v", DiscoveryPort, err)
+		log.Printf("[discovery] giving up on listener: %v", err)
 		return
 	}
 	defer conn.Close()
 
-	log.Printf("[discovery] listening for broadcasts on :%d", DiscoveryPort)
-
-	// Get local IPs for response
-	localIP := getLocalIP()
+	log.Printf("[discovery] listening on UDP :%d", DiscoveryPort)
 
 	buf := make([]byte, 1024)
 	for {
@@ -99,20 +106,58 @@ func RunDiscoveryListener(deviceID string, httpPort int, stopCh <-chan struct{})
 			continue
 		}
 		var msg DiscoveryMsg
-		if err := json.Unmarshal(buf[:n], &msg); err != nil || msg.Magic != MagicHeader {
+		if err := json.Unmarshal(buf[:n], &msg); err != nil || msg.Magic != MagicHeader || msg.DeviceID == deviceID {
 			continue
 		}
-		if msg.Type == "discover" && msg.DeviceID != deviceID {
+
+		switch msg.Type {
+		case "seek":
 			resp := DiscoveryMsg{
 				Magic:    MagicHeader,
 				Type:     "hub",
 				DeviceID: deviceID,
 				Port:     httpPort,
-				Name:     localIP,
 			}
 			data, _ := json.Marshal(resp)
 			conn.WriteTo(data, remoteAddr)
-			log.Printf("[discovery] responded to discovery from %s", remoteAddr)
+
+		case "hub_announce":
+			host, _, _ := net.SplitHostPort(remoteAddr.String())
+			msg.IP = host
+			select {
+			case collisionCh <- msg:
+			default:
+			}
+		}
+	}
+}
+
+// AnnounceHub periodically broadcasts hub presence for collision detection.
+func AnnounceHub(deviceID string, httpPort int, stopCh <-chan struct{}) {
+	conn, err := net.ListenPacket("udp4", ":0")
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	msg := DiscoveryMsg{
+		Magic:    MagicHeader,
+		Type:     "hub_announce",
+		DeviceID: deviceID,
+		Port:     httpPort,
+	}
+	data, _ := json.Marshal(msg)
+
+	broadcastAll(conn, data)
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+			broadcastAll(conn, data)
 		}
 	}
 }

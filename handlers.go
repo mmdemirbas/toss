@@ -22,17 +22,17 @@ func SetupHTTP(node *Node) http.Handler {
 
 	// Static files
 	webSub, _ := fs.Sub(webFS, "web")
-	fileServer := http.FileServer(http.FS(webSub))
-	mux.Handle("/", fileServer)
+	mux.Handle("/", http.FileServer(http.FS(webSub)))
 
-	// WebSocket (hub only, but we register on both—spokes just won't get connections)
+	// WebSocket
 	mux.HandleFunc("/ws", node.HandleWebSocket)
 
-	// API: status
+	// Status
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		role := node.GetRole()
 		status := map[string]interface{}{
-			"role":       node.role,
+			"role":       role,
 			"deviceId":   node.store.config.DeviceID,
 			"deviceName": node.store.config.DeviceName,
 			"token":      "",
@@ -41,16 +41,16 @@ func SetupHTTP(node *Node) http.Handler {
 			"panes":      node.store.GetPanes(),
 			"needsToken": false,
 		}
-		if node.role == "hub" {
+		if role == "hub" {
 			status["token"] = node.token
 		}
-		if node.role == "spoke" && node.store.config.SavedToken == "" {
+		if role == "spoke" && node.store.config.SavedToken == "" {
 			status["needsToken"] = true
 		}
 		json.NewEncoder(w).Encode(status)
 	})
 
-	// API: set token (spoke submits token)
+	// Token
 	mux.HandleFunc("/api/token", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, "method not allowed", 405)
@@ -66,7 +66,7 @@ func SetupHTTP(node *Node) http.Handler {
 			return
 		}
 		node.store.SetSavedToken(body.Token)
-		// Reconnect with new token
+		// Force reconnect
 		node.hubConnMu.Lock()
 		if node.hubConn != nil {
 			node.hubConn.Close()
@@ -76,7 +76,7 @@ func SetupHTTP(node *Node) http.Handler {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	// API: panes CRUD
+	// Panes CRUD
 	mux.HandleFunc("/api/panes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
@@ -88,6 +88,9 @@ func SetupHTTP(node *Node) http.Handler {
 			if pane.ID == "" {
 				pane.ID = generateID()
 			}
+			if pane.Type == "" {
+				pane.Type = PaneMarkdown
+			}
 			if pane.CreatedAt == 0 {
 				pane.CreatedAt = nowMs()
 			}
@@ -96,17 +99,14 @@ func SetupHTTP(node *Node) http.Handler {
 			if pane.CreatedBy == "" {
 				pane.CreatedBy = node.store.config.DeviceID
 			}
-			if pane.Blocks == nil {
-				pane.Blocks = []Block{}
-			}
 			node.store.UpsertPane(pane)
-			// Broadcast
 			update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: node.store.config.DeviceID}}
-			if node.role == "hub" {
+			if node.GetRole() == "hub" {
 				node.broadcast(update, "")
 			} else {
 				node.SendToHub(update)
 			}
+			node.notifySSE()
 			json.NewEncoder(w).Encode(pane)
 		default:
 			http.Error(w, "method not allowed", 405)
@@ -117,10 +117,9 @@ func SetupHTTP(node *Node) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		id := strings.TrimPrefix(r.URL.Path, "/api/panes/")
 		if id == "" {
-			http.Error(w, "missing pane id", 400)
+			http.Error(w, "missing id", 400)
 			return
 		}
-
 		switch r.Method {
 		case "PUT":
 			var pane Pane
@@ -130,35 +129,35 @@ func SetupHTTP(node *Node) http.Handler {
 			pane.Version = nowMs()
 			node.store.UpsertPane(pane)
 			update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: node.store.config.DeviceID}}
-			if node.role == "hub" {
+			if node.GetRole() == "hub" {
 				node.broadcast(update, "")
 			} else {
 				node.SendToHub(update)
 			}
+			node.notifySSE()
 			json.NewEncoder(w).Encode(pane)
-
 		case "DELETE":
 			node.store.DeletePane(id)
 			del := WSMessage{Type: "pane_delete", Payload: PaneDeletePayload{PaneID: id, SenderID: node.store.config.DeviceID}}
-			if node.role == "hub" {
+			if node.GetRole() == "hub" {
 				node.broadcast(del, "")
 			} else {
 				node.SendToHub(del)
 			}
+			node.notifySSE()
 			json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
-
 		default:
 			http.Error(w, "method not allowed", 405)
 		}
 	})
 
-	// API: file upload
+	// File upload
 	mux.HandleFunc("/api/files", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, "method not allowed", 405)
 			return
 		}
-		r.ParseMultipartForm(50 << 20) // 50MB max
+		r.ParseMultipartForm(50 << 20)
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			http.Error(w, "file required", 400)
@@ -172,7 +171,6 @@ func SetupHTTP(node *Node) http.Handler {
 		}
 
 		var storedName string
-		// If forwarded from spoke, use the same file ID
 		if forceID := r.URL.Query().Get("forceid"); forceID != "" {
 			storedName = forceID
 		} else {
@@ -187,26 +185,9 @@ func SetupHTTP(node *Node) http.Handler {
 		defer dst.Close()
 		written, _ := io.Copy(dst, file)
 
-		// If spoke, forward file to hub so other spokes can fetch it
-		if node.role == "spoke" && node.hubAddr != "" {
-			go func() {
-				f, err := os.Open(node.store.FilePath(storedName))
-				if err != nil {
-					return
-				}
-				defer f.Close()
-				body := &bytes.Buffer{}
-				writer := multipart.NewWriter(body)
-				part, err := writer.CreateFormFile("file", header.Filename)
-				if err != nil {
-					return
-				}
-				io.Copy(part, f)
-				writer.Close()
-				req, _ := http.NewRequest("POST", fmt.Sprintf("http://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
-				req.Header.Set("Content-Type", writer.FormDataContentType())
-				http.DefaultClient.Do(req)
-			}()
+		// Spoke → forward to hub
+		if node.GetRole() == "spoke" && node.hubAddr != "" {
+			go forwardFile(node, storedName, header.Filename)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -219,7 +200,7 @@ func SetupHTTP(node *Node) http.Handler {
 		log.Printf("[files] stored %s (%s, %d bytes)", storedName, header.Filename, written)
 	})
 
-	// API: file download
+	// File download
 	mux.HandleFunc("/api/files/", func(w http.ResponseWriter, r *http.Request) {
 		fileID := strings.TrimPrefix(r.URL.Path, "/api/files/")
 		if fileID == "" {
@@ -228,12 +209,11 @@ func SetupHTTP(node *Node) http.Handler {
 		}
 		path := node.store.FilePath(fileID)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// If spoke, try fetching from hub
-			if node.role == "spoke" && node.hubAddr != "" {
+			// Spoke: try fetching from hub
+			if node.GetRole() == "spoke" && node.hubAddr != "" {
 				resp, err := http.Get(fmt.Sprintf("http://%s/api/files/%s", node.hubAddr, fileID))
 				if err == nil && resp.StatusCode == 200 {
 					defer resp.Body.Close()
-					// Cache locally
 					dst, _ := os.Create(path)
 					io.Copy(dst, resp.Body)
 					dst.Close()
@@ -248,4 +228,23 @@ func SetupHTTP(node *Node) http.Handler {
 	})
 
 	return mux
+}
+
+func forwardFile(node *Node, storedName, fileName string) {
+	f, err := os.Open(node.store.FilePath(storedName))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return
+	}
+	io.Copy(part, f)
+	writer.Close()
+	req, _ := http.NewRequest("POST", fmt.Sprintf("http://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	http.DefaultClient.Do(req)
 }

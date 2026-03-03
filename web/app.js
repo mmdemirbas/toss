@@ -1,7 +1,4 @@
-// ============================================================
-// LanPane - Frontend Application
-// ============================================================
-
+// LanPane Frontend
 const API = '';
 let state = {
   panes: [],
@@ -16,6 +13,7 @@ let state = {
 
 let saveTimer = null;
 let eventSource = null;
+let isEditing = false; // tracks if user is actively typing
 
 // ---- Init ----
 async function init() {
@@ -34,7 +32,7 @@ async function fetchStatus() {
     state.token = data.token;
     state.deviceId = data.deviceId;
     state.needsToken = data.needsToken;
-    state.panes = (data.panes || []).sort((a, b) => b.updatedAt - a.updatedAt);
+    state.panes = sortPanes(data.panes || []);
     state.devices = data.devices || [];
     state.connected = true;
   } catch (e) {
@@ -42,24 +40,24 @@ async function fetchStatus() {
   }
 }
 
-async function createPane(name) {
+async function createPane(opts = {}) {
+  const pane = {
+    name: opts.name || '',
+    type: opts.type || 'markdown',
+    content: opts.content || '',
+    language: opts.language || 'plaintext',
+  };
   const res = await fetch(API + '/api/panes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: name || 'Untitled',
-      blocks: [{ id: genId(), type: 'text', content: '', format: '' }]
-    })
+    body: JSON.stringify(pane)
   });
-  const pane = await res.json();
-  state.panes.unshift(pane);
-  state.selectedPaneId = pane.id;
+  const created = await res.json();
+  state.panes.unshift(created);
+  state.selectedPaneId = created.id;
   render();
-  // Focus the first block
-  setTimeout(() => {
-    const ta = document.querySelector('.block-textarea');
-    if (ta) ta.focus();
-  }, 50);
+  focusEditor();
+  return created;
 }
 
 async function updatePane(pane) {
@@ -93,11 +91,7 @@ async function submitToken(token) {
     body: JSON.stringify({ token })
   });
   state.needsToken = false;
-  // Reload after a small delay for reconnection
-  setTimeout(async () => {
-    await fetchStatus();
-    render();
-  }, 2000);
+  setTimeout(async () => { await fetchStatus(); render(); }, 2000);
 }
 
 // ---- SSE ----
@@ -107,21 +101,21 @@ function setupEventSource() {
   eventSource.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
-      const selectedId = state.selectedPaneId;
-      state.panes = (data.panes || []).sort((a, b) => b.updatedAt - a.updatedAt);
+      const selId = state.selectedPaneId;
+      state.panes = sortPanes(data.panes || []);
       state.devices = data.devices || [];
+      state.role = data.role || state.role;
+      if (data.token) state.token = data.token;
       state.connected = true;
-      // Preserve selection
-      state.selectedPaneId = selectedId;
+      state.selectedPaneId = selId;
       renderSidebar();
-      // Only re-render editor if the selected pane was updated externally
-      const currentPane = getSelectedPane();
-      if (currentPane) {
-        const activeEl = document.activeElement;
-        const isEditing = activeEl && activeEl.closest('.block');
-        if (!isEditing) renderEditor();
+      renderStatusBar();
+      // Update editor only if not actively editing
+      if (!isEditing) {
+        const pane = getSelectedPane();
+        if (pane) syncEditorContent(pane);
       }
-    } catch (err) { /* ignore parse errors */ }
+    } catch (err) {}
   };
   eventSource.onerror = () => {
     state.connected = false;
@@ -130,7 +124,7 @@ function setupEventSource() {
   };
 }
 
-// ---- Rendering ----
+// ---- Render ----
 function render() {
   renderOverlay();
   renderSidebar();
@@ -142,41 +136,44 @@ function renderOverlay() {
   const el = document.getElementById('token-overlay');
   if (state.needsToken) {
     el.classList.remove('hidden');
-    document.getElementById('token-input').focus();
+    setTimeout(() => document.getElementById('token-input').focus(), 50);
   } else {
     el.classList.add('hidden');
   }
 }
 
 function renderSidebar() {
-  // Pane list
   const list = document.getElementById('pane-list');
   list.innerHTML = state.panes.map(p => {
     const active = p.id === state.selectedPaneId ? 'active' : '';
-    const icon = getPaneIcon(p);
+    const icon = p.type === 'code' ? '⟨⟩' : '◈';
+    const name = p.name || 'Untitled';
     const time = timeAgo(p.updatedAt);
     return `<div class="pane-item ${active}" data-id="${p.id}">
       <span class="pane-item-icon">${icon}</span>
-      <span class="pane-item-name">${esc(p.name || 'Untitled')}</span>
+      <span class="pane-item-name">${esc(name)}</span>
       <span class="pane-item-time">${time}</span>
     </div>`;
   }).join('');
 
-  // Device list
-  const devList = document.getElementById('device-list');
-  // Hub token display
-  let tokenHtml = '';
+  // Hub token
+  const tokenArea = document.getElementById('hub-token-area');
   if (state.role === 'hub' && state.token) {
-    tokenHtml = `<div class="hub-token">
+    tokenArea.innerHTML = `<div class="hub-token">
       <span class="hub-token-label">Code</span>
       <span class="hub-token-value">${state.token}</span>
     </div>`;
+  } else {
+    tokenArea.innerHTML = '';
   }
-  devList.innerHTML = tokenHtml + state.devices.map(d => {
-    const isSelf = d.id === state.deviceId;
+
+  // Devices
+  const devList = document.getElementById('device-list');
+  devList.innerHTML = state.devices.map(d => {
+    const self = d.id === state.deviceId ? ' (you)' : '';
     return `<div class="device-item">
       <span class="device-dot"></span>
-      <span class="device-name">${esc(d.name)}${isSelf ? ' (you)' : ''}</span>
+      <span class="device-name">${esc(d.name)}${self}</span>
       <span class="device-role">${d.role}</span>
     </div>`;
   }).join('');
@@ -187,7 +184,7 @@ function renderStatusBar() {
   const text = document.querySelector('.status-text');
   if (state.connected) {
     dot.className = 'status-dot connected';
-    text.textContent = state.role === 'hub' ? 'hub · running' : 'spoke · connected';
+    text.textContent = state.role === 'hub' ? 'hub' : 'spoke · connected';
   } else {
     dot.className = 'status-dot error';
     text.textContent = 'disconnected';
@@ -196,294 +193,110 @@ function renderStatusBar() {
 
 function renderEditor() {
   const empty = document.getElementById('empty-state');
-  const editor = document.getElementById('pane-editor');
+  const view = document.getElementById('pane-view');
   const pane = getSelectedPane();
 
   if (!pane) {
     empty.classList.remove('hidden');
-    editor.classList.add('hidden');
+    view.classList.add('hidden');
     return;
   }
 
   empty.classList.add('hidden');
-  editor.classList.remove('hidden');
+  view.classList.remove('hidden');
 
-  document.getElementById('pane-name').value = pane.name || '';
-  renderBlocks(pane);
-}
+  // Name
+  const nameInput = document.getElementById('pane-name');
+  if (document.activeElement !== nameInput) {
+    nameInput.value = pane.name || '';
+  }
 
-function renderBlocks(pane) {
-  const container = document.getElementById('blocks-container');
-  const blocks = pane.blocks || [];
-  container.innerHTML = blocks.map((block, idx) => renderBlock(block, idx)).join('');
-
-  // Apply syntax highlighting and markdown rendering
-  blocks.forEach((block, idx) => {
-    if (block.type === 'code') {
-      applyHighlight(block, idx);
-    } else if (block.type === 'markdown') {
-      applyMarkdown(block, idx);
-    }
+  // Mode buttons
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === pane.type);
   });
 
-  // Auto-resize textareas
-  container.querySelectorAll('.block-textarea').forEach(autoResize);
-}
-
-function renderBlock(block, idx) {
-  const languages = ['javascript','typescript','python','go','rust','java','kotlin','c','cpp','html','css','json','yaml','sql','bash','xml','swift','ruby','php','dart','text'];
-
-  if (block.type === 'image') {
-    return `<div class="block" data-idx="${idx}" data-id="${block.id}">
-      <div class="block-toolbar">
-        <span class="block-type-btn active">image</span>
-        <span class="block-toolbar-spacer"></span>
-        <button class="block-action-btn" onclick="copyImage('${block.fileId}')" title="Copy image">📋</button>
-        <button class="block-action-btn delete" onclick="removeBlock(${idx})" title="Remove">✕</button>
-      </div>
-      <div class="block-image">
-        <img src="/api/files/${block.fileId}" alt="${esc(block.fileName || 'image')}">
-      </div>
-    </div>`;
+  // Language selector
+  const langSel = document.getElementById('lang-select');
+  langSel.classList.toggle('hidden', pane.type !== 'code');
+  if (pane.type === 'code') {
+    langSel.value = pane.language || 'plaintext';
   }
 
-  if (block.type === 'file') {
-    const ext = (block.fileName || '').split('.').pop() || '?';
-    const size = formatBytes(block.fileSize || 0);
-    return `<div class="block" data-idx="${idx}" data-id="${block.id}">
-      <div class="block-toolbar">
-        <span class="block-type-btn active">file</span>
-        <span class="block-toolbar-spacer"></span>
-        <button class="block-action-btn delete" onclick="removeBlock(${idx})" title="Remove">✕</button>
-      </div>
-      <div class="block-file">
-        <div class="block-file-icon">📄</div>
-        <div class="block-file-info">
-          <div class="block-file-name">${esc(block.fileName || 'file')}</div>
-          <div class="block-file-meta">${ext.toUpperCase()} · ${size}</div>
-        </div>
-        <a class="block-file-download" href="/api/files/${block.fileId}" download="${esc(block.fileName)}">Download</a>
-      </div>
-    </div>`;
+  // Editor & preview
+  const editor = document.getElementById('editor');
+  const preview = document.getElementById('preview');
+
+  if (pane.type === 'code') {
+    // Code mode: always show textarea
+    editor.style.display = '';
+    preview.classList.add('hidden');
+    if (document.activeElement !== editor) {
+      editor.value = pane.content || '';
+    }
+  } else {
+    // Markdown mode
+    if (isEditing) {
+      // Editing: show textarea
+      editor.style.display = '';
+      preview.classList.add('hidden');
+      if (document.activeElement !== editor) {
+        editor.value = pane.content || '';
+      }
+    } else if (pane.content && pane.content.trim()) {
+      // Has content, show rendered preview
+      editor.style.display = 'none';
+      preview.classList.remove('hidden');
+      renderMarkdown(pane.content, preview);
+    } else {
+      // Empty, show textarea for input
+      editor.style.display = '';
+      preview.classList.add('hidden');
+      editor.value = '';
+    }
   }
-
-  // Text / Code / Markdown
-  const isCode = block.type === 'code';
-  const isMd = block.type === 'markdown';
-  const monoClass = isCode ? 'mono' : '';
-
-  const langSelector = isCode ? `<select class="block-lang-select" onchange="setBlockLang(${idx}, this.value)">
-    ${languages.map(l => `<option value="${l}" ${block.language === l ? 'selected' : ''}>${l}</option>`).join('')}
-  </select>` : '';
-
-  const renderedArea = (isCode || isMd) ?
-    `<div class="block-rendered" id="rendered-${idx}" ondblclick="editBlock(${idx})"></div>` : '';
-
-  return `<div class="block" data-idx="${idx}" data-id="${block.id}">
-    <div class="block-toolbar">
-      <button class="block-type-btn ${block.type === 'text' ? 'active' : ''}" onclick="setBlockType(${idx},'text')">text</button>
-      <button class="block-type-btn ${block.type === 'code' ? 'active' : ''}" onclick="setBlockType(${idx},'code')">code</button>
-      <button class="block-type-btn ${block.type === 'markdown' ? 'active' : ''}" onclick="setBlockType(${idx},'markdown')">md</button>
-      ${langSelector}
-      <span class="block-toolbar-spacer"></span>
-      <button class="block-action-btn" onclick="copyBlock(${idx})" title="Copy">📋</button>
-      <button class="block-action-btn delete" onclick="removeBlock(${idx})" title="Remove">✕</button>
-    </div>
-    <textarea class="block-textarea ${monoClass}" id="textarea-${idx}"
-      placeholder="Type here..."
-      oninput="onBlockInput(${idx}, this)"
-      onfocus="onBlockFocus(${idx})"
-      onblur="onBlockBlur(${idx})"
-      ${(isCode || isMd) && block.content ? 'style="display:none"' : ''}
-    >${esc(block.content || '')}</textarea>
-    ${renderedArea}
-  </div>`;
 }
 
-function applyHighlight(block, idx) {
-  const rendered = document.getElementById('rendered-' + idx);
-  if (!rendered || !block.content) return;
-  const lang = block.language || 'text';
+function syncEditorContent(pane) {
+  const editor = document.getElementById('editor');
+  if (document.activeElement !== editor) {
+    editor.value = pane.content || '';
+  }
+  if (pane.type === 'markdown' && !isEditing && pane.content && pane.content.trim()) {
+    const preview = document.getElementById('preview');
+    editor.style.display = 'none';
+    preview.classList.remove('hidden');
+    renderMarkdown(pane.content, preview);
+  }
+}
+
+function renderMarkdown(content, el) {
   try {
-    const result = hljs.highlight(block.content, { language: lang, ignoreIllegals: true });
-    rendered.innerHTML = `<pre><code class="hljs language-${lang}">${result.value}</code></pre>`;
-    rendered.classList.remove('hidden');
-  } catch (e) {
-    rendered.innerHTML = `<pre><code>${esc(block.content)}</code></pre>`;
-    rendered.classList.remove('hidden');
-  }
-}
-
-function applyMarkdown(block, idx) {
-  const rendered = document.getElementById('rendered-' + idx);
-  if (!rendered || !block.content) return;
-  try {
-    rendered.innerHTML = marked.parse(block.content);
-    // Highlight code blocks within markdown
-    rendered.querySelectorAll('pre code').forEach(el => {
-      hljs.highlightElement(el);
+    el.innerHTML = marked.parse(content);
+    el.querySelectorAll('pre code').forEach(block => {
+      hljs.highlightElement(block);
     });
-    rendered.classList.remove('hidden');
   } catch (e) {
-    rendered.textContent = block.content;
+    el.textContent = content;
   }
 }
 
-// ---- Block Interactions ----
-function onBlockInput(idx, textarea) {
-  autoResize(textarea);
-  const pane = getSelectedPane();
-  if (!pane) return;
-  pane.blocks[idx].content = textarea.value;
-  debouncedSave(pane);
-}
-
-function onBlockFocus(idx) {
-  const rendered = document.getElementById('rendered-' + idx);
-  const textarea = document.getElementById('textarea-' + idx);
-  if (rendered) rendered.style.display = 'none';
-  if (textarea) {
-    textarea.style.display = '';
-    autoResize(textarea);
-  }
-}
-
-function onBlockBlur(idx) {
-  const pane = getSelectedPane();
-  if (!pane) return;
-  const block = pane.blocks[idx];
-  if ((block.type === 'code' || block.type === 'markdown') && block.content) {
-    const textarea = document.getElementById('textarea-' + idx);
-    const rendered = document.getElementById('rendered-' + idx);
-    if (textarea) textarea.style.display = 'none';
-    if (rendered) {
-      rendered.style.display = '';
-      if (block.type === 'code') applyHighlight(block, idx);
-      else applyMarkdown(block, idx);
-    }
-  }
-}
-
-function editBlock(idx) {
-  const textarea = document.getElementById('textarea-' + idx);
-  if (textarea) {
-    textarea.style.display = '';
-    autoResize(textarea);
-    textarea.focus();
-  }
-}
-
-function setBlockType(idx, type) {
-  const pane = getSelectedPane();
-  if (!pane) return;
-  pane.blocks[idx].type = type;
-  if (type === 'code' && !pane.blocks[idx].language) {
-    pane.blocks[idx].language = 'javascript';
-  }
-  savePaneNow(pane);
-  renderEditor();
-}
-
-function setBlockLang(idx, lang) {
-  const pane = getSelectedPane();
-  if (!pane) return;
-  pane.blocks[idx].language = lang;
-  debouncedSave(pane);
-}
-
-function removeBlock(idx) {
-  const pane = getSelectedPane();
-  if (!pane) return;
-  pane.blocks.splice(idx, 1);
-  if (pane.blocks.length === 0) {
-    pane.blocks.push({ id: genId(), type: 'text', content: '' });
-  }
-  savePaneNow(pane);
-  renderEditor();
-}
-
-function addBlock(type) {
-  const pane = getSelectedPane();
-  if (!pane) return;
-  const block = { id: genId(), type, content: '' };
-  if (type === 'code') block.language = 'javascript';
-  pane.blocks.push(block);
-  savePaneNow(pane);
-  renderEditor();
-  setTimeout(() => {
-    const textareas = document.querySelectorAll('.block-textarea');
-    if (textareas.length) textareas[textareas.length - 1].focus();
-  }, 50);
-}
-
-async function copyBlock(idx) {
-  const pane = getSelectedPane();
-  if (!pane) return;
-  const block = pane.blocks[idx];
-  if (block.content) {
-    await navigator.clipboard.writeText(block.content);
-    showToast('Copied to clipboard');
-  }
-}
-
-async function copyImage(fileId) {
-  try {
-    const res = await fetch('/api/files/' + fileId);
-    const blob = await res.blob();
-    // Clipboard API requires image/png
-    let pngBlob = blob;
-    if (blob.type !== 'image/png') {
-      pngBlob = await convertToPng(blob);
-    }
-    await navigator.clipboard.write([
-      new ClipboardItem({ 'image/png': pngBlob })
-    ]);
-    showToast('Image copied to clipboard');
-  } catch (e) {
-    showToast('Copy failed — try right-click → Copy');
-  }
-}
-
-function convertToPng(blob) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      canvas.getContext('2d').drawImage(img, 0, 0);
-      canvas.toBlob(resolve, 'image/png');
-    };
-    img.src = URL.createObjectURL(blob);
-  });
-}
-
-// ---- Save Logic ----
-function debouncedSave(pane) {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => savePaneNow(pane), 400);
-}
-
-async function savePaneNow(pane) {
-  clearTimeout(saveTimer);
-  try { await updatePane(pane); } catch (e) { console.error('Save failed:', e); }
-}
-
-// ---- Event Listeners ----
+// ---- Listeners ----
 function setupListeners() {
-  // New pane button
+  // New pane
   document.getElementById('new-pane-btn').addEventListener('click', () => createPane());
 
   // Pane list click
   document.getElementById('pane-list').addEventListener('click', (e) => {
     const item = e.target.closest('.pane-item');
     if (item) {
+      isEditing = false;
       state.selectedPaneId = item.dataset.id;
       render();
     }
   });
 
-  // Pane name edit
+  // Pane name
   document.getElementById('pane-name').addEventListener('input', (e) => {
     const pane = getSelectedPane();
     if (pane) {
@@ -493,18 +306,87 @@ function setupListeners() {
     }
   });
 
-  // Add blocks
-  document.getElementById('add-text-block').addEventListener('click', () => addBlock('text'));
-  document.getElementById('add-code-block').addEventListener('click', () => addBlock('code'));
+  // Mode switch
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pane = getSelectedPane();
+      if (!pane) return;
+      pane.type = btn.dataset.mode;
+      if (pane.type === 'code' && !pane.language) pane.language = 'plaintext';
+      isEditing = false;
+      savePaneNow(pane);
+      renderEditor();
+    });
+  });
 
-  // Delete pane
-  document.getElementById('delete-pane-btn').addEventListener('click', () => {
+  // Language selector
+  document.getElementById('lang-select').addEventListener('change', (e) => {
+    const pane = getSelectedPane();
+    if (pane) {
+      pane.language = e.target.value;
+      debouncedSave(pane);
+    }
+  });
+
+  // Editor input
+  const editor = document.getElementById('editor');
+  editor.addEventListener('input', () => {
+    const pane = getSelectedPane();
+    if (pane) {
+      pane.content = editor.value;
+      debouncedSave(pane);
+    }
+  });
+  editor.addEventListener('focus', () => { isEditing = true; });
+  editor.addEventListener('blur', () => {
+    isEditing = false;
+    const pane = getSelectedPane();
+    if (pane && pane.type === 'markdown') {
+      renderEditor(); // switch to preview
+    }
+  });
+
+  // Tab key in editor
+  editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = editor.selectionStart;
+      const end = editor.selectionEnd;
+      editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
+      editor.selectionStart = editor.selectionEnd = start + 2;
+      editor.dispatchEvent(new Event('input'));
+    }
+  });
+
+  // Click preview to edit
+  document.getElementById('preview').addEventListener('click', (e) => {
+    // Don't switch to edit if clicking a link or image
+    if (e.target.tagName === 'A' || e.target.tagName === 'IMG') return;
+    const pane = getSelectedPane();
+    if (pane && pane.type === 'markdown') {
+      isEditing = true;
+      renderEditor();
+      focusEditor();
+    }
+  });
+
+  // Copy
+  document.getElementById('copy-btn').addEventListener('click', () => {
+    const pane = getSelectedPane();
+    if (pane && pane.content) {
+      navigator.clipboard.writeText(pane.content);
+      showToast('Copied to clipboard');
+    }
+  });
+
+  // Delete
+  document.getElementById('delete-btn').addEventListener('click', () => {
     if (state.selectedPaneId && confirm('Delete this pane?')) {
       deletePane(state.selectedPaneId);
     }
   });
 
-  // Token submit
+  // Token
   document.getElementById('token-submit').addEventListener('click', () => {
     const val = document.getElementById('token-input').value.trim();
     if (val) submitToken(val);
@@ -516,24 +398,13 @@ function setupListeners() {
     }
   });
 
-  // Global paste
+  // Global paste (image handling)
   document.addEventListener('paste', handlePaste);
 
   // Drag and drop
   let dragCounter = 0;
-  document.addEventListener('dragenter', (e) => {
-    e.preventDefault();
-    dragCounter++;
-    document.body.classList.add('drop-active');
-  });
-  document.addEventListener('dragleave', (e) => {
-    e.preventDefault();
-    dragCounter--;
-    if (dragCounter <= 0) {
-      dragCounter = 0;
-      document.body.classList.remove('drop-active');
-    }
-  });
+  document.addEventListener('dragenter', (e) => { e.preventDefault(); dragCounter++; document.body.classList.add('drop-active'); });
+  document.addEventListener('dragleave', (e) => { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; document.body.classList.remove('drop-active'); } });
   document.addEventListener('dragover', (e) => e.preventDefault());
   document.addEventListener('drop', handleDrop);
 
@@ -555,7 +426,44 @@ async function handlePaste(e) {
       e.preventDefault();
       const file = item.getAsFile();
       if (!file) continue;
-      await addImageFile(file);
+
+      // Upload the image
+      const result = await uploadFile(file);
+      const imgUrl = `/api/files/${result.fileId}`;
+
+      // Ensure we have a pane
+      let pane = getSelectedPane();
+      if (!pane) {
+        await createPane({ type: 'markdown', name: 'Image' });
+        pane = getSelectedPane();
+      }
+
+      // Insert markdown image reference into content
+      const imgMd = `![${result.fileName || 'image'}](${imgUrl})`;
+      const editor = document.getElementById('editor');
+
+      if (document.activeElement === editor) {
+        // Insert at cursor
+        const start = editor.selectionStart;
+        const before = pane.content.substring(0, start);
+        const after = pane.content.substring(editor.selectionEnd);
+        pane.content = before + imgMd + '\n' + after;
+        editor.value = pane.content;
+        editor.selectionStart = editor.selectionEnd = start + imgMd.length + 1;
+      } else {
+        // Append
+        pane.content = (pane.content ? pane.content + '\n\n' : '') + imgMd + '\n';
+        editor.value = pane.content;
+      }
+
+      // If it was markdown and in preview mode, switch to edit briefly then save
+      if (pane.type === 'markdown') {
+        isEditing = true;
+        renderEditor();
+      }
+
+      await savePaneNow(pane);
+      showToast('Image pasted');
       return;
     }
   }
@@ -564,59 +472,43 @@ async function handlePaste(e) {
 async function handleDrop(e) {
   e.preventDefault();
   document.body.classList.remove('drop-active');
-
   const files = e.dataTransfer?.files;
   if (!files || files.length === 0) return;
 
-  // Ensure we have a pane
-  if (!state.selectedPaneId) {
-    await createPane('Dropped files');
+  let pane = getSelectedPane();
+  if (!pane) {
+    await createPane({ type: 'markdown', name: 'Files' });
+    pane = getSelectedPane();
   }
 
   for (const file of files) {
+    const result = await uploadFile(file);
+    const url = `/api/files/${result.fileId}`;
+
+    let insertion;
     if (file.type.startsWith('image/')) {
-      await addImageFile(file);
+      insertion = `![${result.fileName}](${url})`;
     } else {
-      await addFileBlock(file);
+      insertion = `[${result.fileName}](${url})`;
     }
+    pane.content = (pane.content ? pane.content + '\n\n' : '') + insertion + '\n';
   }
-}
 
-async function addImageFile(file) {
-  if (!state.selectedPaneId) await createPane('Image');
-  const pane = getSelectedPane();
-  if (!pane) return;
-
-  const result = await uploadFile(file);
-  const block = {
-    id: genId(),
-    type: 'image',
-    fileId: result.fileId,
-    fileName: result.fileName,
-    mimeType: result.mimeType,
-    fileSize: result.fileSize,
-  };
-  pane.blocks.push(block);
+  isEditing = false;
   await savePaneNow(pane);
   renderEditor();
+  showToast(`${files.length} file(s) added`);
 }
 
-async function addFileBlock(file) {
-  const pane = getSelectedPane();
-  if (!pane) return;
+// ---- Save ----
+function debouncedSave(pane) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => savePaneNow(pane), 400);
+}
 
-  const result = await uploadFile(file);
-  const block = {
-    id: genId(),
-    type: 'file',
-    fileId: result.fileId,
-    fileName: result.fileName,
-    mimeType: result.mimeType,
-    fileSize: result.fileSize,
-  };
-  pane.blocks.push(block);
-  await savePaneNow(pane);
-  renderEditor();
+async function savePaneNow(pane) {
+  clearTimeout(saveTimer);
+  try { await updatePane(pane); } catch (e) { console.error('Save failed:', e); }
 }
 
 // ---- Helpers ----
@@ -624,30 +516,21 @@ function getSelectedPane() {
   return state.panes.find(p => p.id === state.selectedPaneId) || null;
 }
 
-function getPaneIcon(pane) {
-  if (!pane.blocks || pane.blocks.length === 0) return '📝';
-  const types = pane.blocks.map(b => b.type);
-  if (types.includes('image')) return '🖼';
-  if (types.includes('file')) return '📎';
-  if (types.includes('code')) return '⟨⟩';
-  if (types.includes('markdown')) return '◈';
-  return '📝';
+function sortPanes(panes) {
+  return panes.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
-function genId() {
-  return Math.random().toString(36).substr(2, 12);
+function focusEditor() {
+  setTimeout(() => {
+    const editor = document.getElementById('editor');
+    if (editor) { isEditing = true; editor.focus(); }
+  }, 50);
 }
 
 function esc(str) {
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML;
-}
-
-function autoResize(el) {
-  if (!el) return;
-  el.style.height = 'auto';
-  el.style.height = el.scrollHeight + 'px';
 }
 
 function timeAgo(ts) {
@@ -659,21 +542,8 @@ function timeAgo(ts) {
   return Math.floor(diff / 86400000) + 'd';
 }
 
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
 function showToast(msg) {
-  let toast = document.querySelector('.copy-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.className = 'copy-toast';
-    document.body.appendChild(toast);
-  }
+  const toast = document.getElementById('toast');
   toast.textContent = msg;
   toast.classList.add('show');
   setTimeout(() => toast.classList.remove('show'), 2000);

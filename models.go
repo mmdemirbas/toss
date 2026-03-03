@@ -7,34 +7,22 @@ import (
 	"time"
 )
 
-// Block types
+// Pane types
 const (
-	BlockText     = "text"
-	BlockCode     = "code"
-	BlockMarkdown = "markdown"
-	BlockImage    = "image"
-	BlockFile     = "file"
+	PaneCode     = "code"
+	PaneMarkdown = "markdown"
 )
 
-type Block struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Content  string `json:"content,omitempty"`
-	Language string `json:"language,omitempty"`
-	FileID   string `json:"fileId,omitempty"`
-	FileName string `json:"fileName,omitempty"`
-	MimeType string `json:"mimeType,omitempty"`
-	FileSize int64  `json:"fileSize,omitempty"`
-}
-
 type Pane struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Blocks    []Block `json:"blocks"`
-	CreatedBy string  `json:"createdBy"`
-	CreatedAt int64   `json:"createdAt"`
-	UpdatedAt int64   `json:"updatedAt"`
-	Version   int64   `json:"version"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	Language  string `json:"language,omitempty"`
+	CreatedBy string `json:"createdBy"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+	Version   int64  `json:"version"`
 }
 
 type Device struct {
@@ -76,7 +64,13 @@ type DevicesPayload struct {
 	Devices []Device `json:"devices"`
 }
 
-// Helper to generate IDs
+// Hub collision: the other hub tells us to demote
+type DemotePayload struct {
+	HubDeviceID string `json:"hubDeviceId"`
+	HubAddr     string `json:"hubAddr"`
+	HubPort     int    `json:"hubPort"`
+}
+
 func generateID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
@@ -84,7 +78,7 @@ func generateID() string {
 }
 
 func generateToken() string {
-	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no ambiguous chars
+	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	result := make([]byte, 6)
 	for i := range result {
 		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))

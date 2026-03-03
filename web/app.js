@@ -11,6 +11,9 @@ let state = {
   connected: false,
   previewByPaneId: {},
   sidebarCollapsed: false,
+  wrapEnabled: false,
+  manualTitleByPaneId: {},
+  pendingAutoNameByPaneId: {},
 };
 
 let autoNameTimer = null;
@@ -20,20 +23,17 @@ let autoDetectTimer = null;
 let highlightFrame = null;
 let lastHighlightKey = '';
 let draggedPaneId = null;
+let paneMeta = {};
+let creatingPane = false;
 
 function scheduleAutoName(pane) {
   // Only auto-name if pane doesn't have an explicit name
   if ((pane.name || '').trim()) return;
+  if (state.manualTitleByPaneId[pane.id]) return;
   
   clearTimeout(autoNameTimer);
   autoNameTimer = setTimeout(() => {
-    const name = generateAutoName(pane.content);
-    if (name) {
-      pane.name = name;
-      document.getElementById('pane-name').value = name;
-      debouncedSave(pane);
-      renderSidebar();
-    }
+    applyAutoNameIfAllowed(pane.id);
   }, 1500);
 }
 
@@ -108,6 +108,7 @@ function detectLanguage(content) {
 // ---- Init ----
 async function init() {
   loadSidebarState();
+  loadViewState();
   await fetchStatus();
   try {
     setupEventSource();
@@ -116,6 +117,15 @@ async function init() {
   }
   setupListeners();
   render();
+}
+
+function loadViewState() {
+  try {
+    state.wrapEnabled = localStorage.getItem('lanpane.wrapEnabled') === '1';
+  } catch (e) {
+    state.wrapEnabled = false;
+  }
+  applyWrapState();
 }
 
 function loadSidebarState() {
@@ -143,6 +153,54 @@ function toggleSidebar() {
   try {
     localStorage.setItem('lanpane.sidebarCollapsed', state.sidebarCollapsed ? '1' : '0');
   } catch (e) {}
+}
+
+function applyWrapState() {
+  const app = document.getElementById('app');
+  const btn = document.getElementById('wrap-btn');
+  if (app) app.classList.toggle('wrap-enabled', state.wrapEnabled);
+  if (btn) {
+    btn.classList.toggle('active', state.wrapEnabled);
+    btn.title = state.wrapEnabled ? 'Disable wrap' : 'Enable wrap';
+    btn.setAttribute('aria-label', btn.title);
+  }
+}
+
+function toggleWrap() {
+  state.wrapEnabled = !state.wrapEnabled;
+  applyWrapState();
+  try {
+    localStorage.setItem('lanpane.wrapEnabled', state.wrapEnabled ? '1' : '0');
+  } catch (e) {}
+
+  const pane = getSelectedPane();
+  if (!pane) return;
+  if (isPanePreviewing(pane.id)) renderPreview(pane);
+  else renderEditorHighlight(pane);
+}
+
+function applyAutoNameIfAllowed(paneId) {
+  const pane = state.panes.find((p) => p.id === paneId);
+  if (!pane) return;
+  if ((pane.name || '').trim()) return;
+  if (state.manualTitleByPaneId[paneId]) return;
+
+  const name = generateAutoName(pane.content);
+  if (!name) return;
+
+  const nameInput = document.getElementById('pane-name');
+  if (state.selectedPaneId === paneId && document.activeElement === nameInput) {
+    state.pendingAutoNameByPaneId[paneId] = true;
+    return;
+  }
+
+  pane.name = name;
+  delete state.pendingAutoNameByPaneId[paneId];
+  if (state.selectedPaneId === paneId && nameInput) {
+    nameInput.value = name;
+  }
+  debouncedSave(pane);
+  renderSidebar();
 }
 
 function isPanePreviewing(paneId) {
@@ -181,6 +239,8 @@ async function fetchStatus() {
 }
 
 async function createPane(opts = {}) {
+  if (creatingPane) return null;
+  creatingPane = true;
   const pane = {
     name: opts.name || '',
     type: 'code',
@@ -188,18 +248,22 @@ async function createPane(opts = {}) {
     language: opts.language || 'plaintext',
     order: Date.now(),
   };
-  const res = await fetch(API + '/api/panes', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(pane)
-  });
-  const created = await res.json();
-  state.panes.unshift(created);
-  state.selectedPaneId = created.id;
-  setPanePreviewing(created.id, created.language === 'markdown');
-  render();
-  focusEditor();
-  return created;
+  try {
+    const res = await fetch(API + '/api/panes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pane)
+    });
+    const created = await res.json();
+    state.panes = [created, ...state.panes.filter((p) => p.id !== created.id)];
+    state.selectedPaneId = created.id;
+    setPanePreviewing(created.id, created.language === 'markdown');
+    render();
+    focusEditor();
+    return created;
+  } finally {
+    creatingPane = false;
+  }
 }
 
 async function updatePane(pane) {
@@ -216,6 +280,8 @@ async function deletePane(id) {
   await fetch(API + '/api/panes/' + id, { method: 'DELETE' });
   state.panes = state.panes.filter(p => p.id !== id);
   delete state.previewByPaneId[id];
+  delete state.manualTitleByPaneId[id];
+  delete state.pendingAutoNameByPaneId[id];
   if (state.selectedPaneId === id) {
     state.selectedPaneId = state.panes.length ? state.panes[0].id : null;
   }
@@ -296,18 +362,41 @@ function renderOverlay() {
 
 function renderSidebar() {
   const list = document.getElementById('pane-list');
-  list.innerHTML = state.panes.map(p => {
+  const now = Date.now();
+  const addRow = `<div class="pane-item pane-item-add" data-add-tab="1" role="button" tabindex="0" aria-label="Add Tab">
+      <span class="pane-item-icon">+</span>
+      <span class="pane-item-name">Add Tab</span>
+    </div>`;
+  list.innerHTML = addRow + state.panes.map(p => {
     const active = p.id === state.selectedPaneId ? 'active' : '';
     const icon = langIcon(p.language);
     const name = p.name || 'Untitled';
     const time = timeAgo(p.updatedAt);
-    return `<div class="pane-item ${active}" data-id="${p.id}" draggable="true">
+    const prev = paneMeta[p.id];
+    const isNew = !prev;
+    const isUpdated = !!prev && (p.updatedAt || 0) > (prev.updatedAt || 0);
+    const seenAt = prev ? prev.seenAt : now;
+    const ageMs = now - (p.updatedAt || seenAt || now);
+    let ageClass = 'age-old';
+    if (ageMs < 60000) ageClass = 'age-fresh';
+    else if (ageMs < 3 * 60000) ageClass = 'age-recent';
+    else if (ageMs < 15 * 60000) ageClass = 'age-warm';
+    else if (ageMs < 60 * 60000) ageClass = 'age-cool';
+    const flashClass = isNew ? 'flash-new' : (isUpdated ? 'flash-updated' : '');
+    paneMeta[p.id] = { updatedAt: p.updatedAt || 0, seenAt };
+
+    return `<div class="pane-item ${active} ${ageClass} ${flashClass}" data-id="${p.id}" draggable="true">
       <span class="pane-item-icon">${icon}</span>
       <span class="pane-item-name">${esc(name)}</span>
       <span class="pane-item-time">${time}</span>
       <button class="pane-item-delete" data-delete-id="${p.id}" title="Delete pane" aria-label="Delete pane">x</button>
     </div>`;
   }).join('');
+
+  const currentIds = new Set(state.panes.map((p) => p.id));
+  Object.keys(paneMeta).forEach((id) => {
+    if (!currentIds.has(id)) delete paneMeta[id];
+  });
 
   const tokenArea = document.getElementById('hub-token-area');
   tokenArea.innerHTML = (state.role === 'hub' && state.token)
@@ -367,6 +456,7 @@ function renderEditor() {
   const editor = document.getElementById('editor');
   const editorLayer = document.getElementById('editor-layer');
   const preview = document.getElementById('preview');
+  applyWrapState();
 
   if (previewing) {
     editorLayer.style.display = 'none';
@@ -391,11 +481,13 @@ function renderPreview(pane) {
     try {
       preview.innerHTML = marked.parse(content);
       preview.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+      enhanceMarkdownCodeBlocks(preview);
     } catch (e) {
       preview.textContent = content;
     }
   } else if (lang === 'plaintext') {
-    preview.innerHTML = `<pre style="white-space:pre-wrap;margin:0">${esc(content)}</pre>`;
+    const ws = state.wrapEnabled ? 'pre-wrap' : 'pre';
+    preview.innerHTML = `<pre style="white-space:${ws};margin:0">${esc(content)}</pre>`;
   } else {
     try {
       const result = hljs.highlight(content, { language: lang, ignoreIllegals: true });
@@ -404,6 +496,31 @@ function renderPreview(pane) {
       preview.innerHTML = `<pre><code>${esc(content)}</code></pre>`;
     }
   }
+}
+
+function enhanceMarkdownCodeBlocks(previewEl) {
+  previewEl.querySelectorAll('pre').forEach((pre) => {
+    if (pre.querySelector('.code-copy-btn')) return;
+    const code = pre.querySelector('code');
+    if (!code) return;
+
+    pre.classList.add('code-copy-ready');
+    const btn = document.createElement('button');
+    btn.className = 'code-copy-btn';
+    btn.type = 'button';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(code.textContent || '');
+        showToast('Code copied');
+      } catch (err) {
+        showToast('Copy failed');
+      }
+    });
+    pre.appendChild(btn);
+  });
 }
 
 function renderEditorHighlight(pane) {
@@ -458,9 +575,14 @@ function syncEditorScroll() {
 // ---- Listeners ----
 function setupListeners() {
   document.getElementById('sidebar-toggle-btn').addEventListener('click', toggleSidebar);
-  document.getElementById('new-pane-btn').addEventListener('click', () => createPane());
+  document.getElementById('wrap-btn').addEventListener('click', toggleWrap);
 
   document.getElementById('pane-list').addEventListener('click', (e) => {
+    const addRow = e.target.closest('.pane-item-add');
+    if (addRow) {
+      createPane();
+      return;
+    }
     const delBtn = e.target.closest('.pane-item-delete');
     if (delBtn) {
       const id = delBtn.dataset.deleteId;
@@ -475,9 +597,18 @@ function setupListeners() {
     }
   });
 
+  document.getElementById('pane-list').addEventListener('keydown', (e) => {
+    const addRow = e.target.closest('.pane-item-add');
+    if (!addRow) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      createPane();
+    }
+  });
+
   document.getElementById('pane-list').addEventListener('dragstart', (e) => {
     const item = e.target.closest('.pane-item');
-    if (!item) return;
+    if (!item || item.classList.contains('pane-item-add')) return;
     draggedPaneId = item.dataset.id;
     item.classList.add('dragging');
     if (e.dataTransfer) {
@@ -488,7 +619,7 @@ function setupListeners() {
 
   document.getElementById('pane-list').addEventListener('dragover', (e) => {
     const item = e.target.closest('.pane-item');
-    if (!item || item.dataset.id === draggedPaneId) return;
+    if (!item || item.classList.contains('pane-item-add') || item.dataset.id === draggedPaneId) return;
     e.preventDefault();
     e.stopPropagation();
     const rect = item.getBoundingClientRect();
@@ -505,7 +636,7 @@ function setupListeners() {
 
   document.getElementById('pane-list').addEventListener('drop', (e) => {
     const item = e.target.closest('.pane-item');
-    if (!item || !draggedPaneId || item.dataset.id === draggedPaneId) return;
+    if (!item || item.classList.contains('pane-item-add') || !draggedPaneId || item.dataset.id === draggedPaneId) return;
     e.preventDefault();
     e.stopPropagation();
     const rect = item.getBoundingClientRect();
@@ -522,7 +653,26 @@ function setupListeners() {
   document.getElementById('pane-name').addEventListener('input', (e) => {
     const pane = getSelectedPane();
     if (pane) {
-      pane.name = e.target.value;
+      const value = e.target.value;
+      pane.name = value;
+      state.manualTitleByPaneId[pane.id] = value.trim().length > 0;
+      if (value.trim().length > 0) delete state.pendingAutoNameByPaneId[pane.id];
+      debouncedSave(pane);
+      renderSidebar();
+    }
+  });
+
+  document.getElementById('pane-name').addEventListener('blur', (e) => {
+    const pane = getSelectedPane();
+    if (!pane) return;
+    const value = e.target.value.trim();
+    if (value.length > 0) return;
+
+    pane.name = '';
+    state.manualTitleByPaneId[pane.id] = false;
+    if (state.pendingAutoNameByPaneId[pane.id] || (pane.content || '').trim()) {
+      applyAutoNameIfAllowed(pane.id);
+    } else {
       debouncedSave(pane);
       renderSidebar();
     }
@@ -571,15 +721,6 @@ function setupListeners() {
   // Preview selection allowed - no toggle on click
   // (user should use the button to exit preview, allowing copy/selection)
 
-  // Copy
-  document.getElementById('copy-btn').addEventListener('click', () => {
-    const pane = getSelectedPane();
-    if (pane && pane.content) {
-      navigator.clipboard.writeText(pane.content);
-      showToast('Copied to clipboard');
-    }
-  });
-
   // Token
   document.getElementById('token-submit').addEventListener('click', () => {
     const val = document.getElementById('token-input').value.trim();
@@ -609,6 +750,10 @@ function setupListeners() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
       e.preventDefault();
       toggleSidebar();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+      e.preventDefault();
+      toggleWrap();
     }
   });
 }
@@ -664,8 +809,8 @@ function scheduleAutoDetect(pane) {
     if (detected && detected !== pane.language) {
       pane.language = detected;
       document.getElementById('lang-select').value = detected;
+      debouncedSave(pane);
       if (!isPanePreviewing(pane.id)) renderEditorHighlight(pane);
-      // Don't save just for language change during typing — it'll save with next content save
     }
   }, 1500);
 }

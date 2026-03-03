@@ -32,9 +32,6 @@
         <button id="sidebar-toggle-btn" title="Collapse sidebar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <button id="new-pane-btn" title="New Pane (Ctrl+N)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
       </div>
       <div class="pane-list" id="pane-list"></div>
       <div class="sidebar-footer">
@@ -60,7 +57,7 @@
       <div id="pane-view" class="pane-view hidden">
         <div class="pane-toolbar">
           <input type="text" id="pane-name" class="pane-name-input" placeholder="Untitled" spellcheck="false">
-          <div class="toolbar-sep"></div>
+          <div class="toolbar-spacer"></div>
           <select id="lang-select" class="lang-select">
             <option value="plaintext">plaintext</option>
             <option value="markdown">markdown</option>
@@ -90,13 +87,12 @@
             <option value="xml">xml</option>
             <option value="yaml">yaml</option>
           </select>
+          <button id="wrap-btn" class="preview-toggle" title="Enable wrap (Ctrl+W)">
+            <span>Wrap</span>
+          </button>
           <button id="preview-btn" class="preview-toggle" title="Toggle preview (Ctrl+P)">
             <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             <span>Preview</span>
-          </button>
-          <div class="toolbar-spacer"></div>
-          <button id="copy-btn" class="tool-btn" title="Copy content">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
         </div>
 

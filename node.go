@@ -32,6 +32,7 @@ type Node struct {
 	role    string // "hub" or "spoke"
 	token   string
 	hubAddr string
+	hubID   string
 
 	authMu          sync.RWMutex
 	spokeNeedsToken bool
@@ -40,6 +41,7 @@ type Node struct {
 	clients     map[string]*Client
 	clientsMu   sync.RWMutex
 	collisionCh chan DiscoveryMsg
+	reverseCh   chan DiscoveryMsg
 	hubStopCh   chan struct{} // closed when hub should stop (demotion)
 
 	// Spoke state
@@ -63,6 +65,7 @@ func NewNode(store *Store, port int) *Node {
 		clients:     make(map[string]*Client),
 		devices:     make(map[string]Device),
 		collisionCh: make(chan DiscoveryMsg, 4),
+		reverseCh:   make(chan DiscoveryMsg, 8),
 		hubStopCh:   make(chan struct{}),
 		spokeStop:   make(chan struct{}),
 		sseSubs:     make(map[chan struct{}]struct{}),
@@ -98,13 +101,13 @@ func (n *Node) SpokeNeedsToken() bool {
 // Start performs discovery and starts in the appropriate role.
 func (n *Node) Start() {
 	log.Println("[node] discovering hub on LAN...")
-	hubAddr, _, err := DiscoverHub(n.store.config.DeviceID, 3*time.Second)
+	hubAddr, hubID, err := DiscoverHub(n.store.config.DeviceID, 3*time.Second)
 	if err != nil {
 		log.Printf("[node] discovery error: %v", err)
 	}
 
 	if hubAddr != "" {
-		n.becomeSpoke(hubAddr)
+		n.becomeSpoke(hubAddr, hubID)
 	} else {
 		n.becomeHub()
 	}
@@ -135,15 +138,17 @@ func (n *Node) becomeHub() {
 
 	log.Printf("[node] running as HUB — code: %s", n.token)
 
-	go RunDiscoveryListener(n.store.config.DeviceID, n.port, n.collisionCh, n.hubStopCh)
+	go RunDiscoveryListener(n.store.config.DeviceID, n.port, n.collisionCh, n.reverseCh, n.hubStopCh)
 	go AnnounceHub(n.store.config.DeviceID, n.port, n.hubStopCh)
 	go n.handleHubCollisions()
+	go n.handleReverseOffers()
 }
 
-func (n *Node) becomeSpoke(hubAddr string) {
+func (n *Node) becomeSpoke(hubAddr, hubID string) {
 	n.roleMu.Lock()
 	n.role = "spoke"
 	n.hubAddr = hubAddr
+	n.hubID = hubID
 	n.spokeStop = make(chan struct{})
 	n.roleMu.Unlock()
 	n.setSpokeNeedsToken(n.IsAuthRequired() && normalizeToken(n.store.config.SavedToken) == "")
@@ -186,15 +191,51 @@ func (n *Node) demoteToSpoke(hubAddr string) {
 	}
 	n.clientsMu.Unlock()
 
-	n.becomeSpoke(hubAddr)
+	n.becomeSpoke(hubAddr, "")
 	n.notifySSE()
+}
+
+func (n *Node) handleReverseOffers() {
+	for {
+		select {
+		case <-n.hubStopCh:
+			return
+		case msg := <-n.reverseCh:
+			n.tryReverseDial(msg)
+		}
+	}
+}
+
+func (n *Node) tryReverseDial(msg DiscoveryMsg) {
+	if msg.IP == "" || msg.Port == 0 || msg.DeviceID == "" {
+		return
+	}
+	n.clientsMu.RLock()
+	_, exists := n.clients[msg.DeviceID]
+	n.clientsMu.RUnlock()
+	if exists {
+		return
+	}
+	addr := fmt.Sprintf("%s:%d", msg.IP, msg.Port)
+	url := "ws://" + addr + "/ws"
+	log.Printf("[hub] attempting reverse dial to %s (%s)", addr, msg.DeviceID)
+	dialer := websocket.Dialer{HandshakeTimeout: 4 * time.Second}
+	conn, _, err := dialer.Dial(url, nil)
+	if err != nil {
+		return
+	}
+	if err := n.acceptSpokeConn(conn); err != nil {
+		log.Printf("[hub] reverse dial failed: %v", err)
+		conn.Close()
+	}
 }
 
 // === Hub WebSocket Handler ===
 
 func (n *Node) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	if n.GetRole() != "hub" {
-		http.Error(w, "not a hub", http.StatusServiceUnavailable)
+	role := n.GetRole()
+	if role != "hub" && role != "spoke" {
+		http.Error(w, "node not ready", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -203,54 +244,58 @@ func (n *Node) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &Client{
-		conn:   conn,
-		sendCh: make(chan []byte, 64),
+	if role == "hub" {
+		if err := n.acceptSpokeConn(conn); err != nil {
+			conn.Close()
+		}
+		return
 	}
+
+	if err := n.runSpokeConn(conn, true); err != nil {
+		conn.Close()
+	}
+}
+
+func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
+	client := &Client{conn: conn, sendCh: make(chan []byte, 64)}
 	go n.clientWriter(client)
 
-	// Wait for auth (30s deadline)
 	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, msgData, err := conn.ReadMessage()
 	if err != nil {
-		conn.Close()
-		return
+		return err
 	}
 
 	var msg WSMessage
 	if err := json.Unmarshal(msgData, &msg); err != nil || msg.Type != "auth" {
-		n.sendToClient(client, WSMessage{Type: "auth_fail"})
-		conn.Close()
-		return
+		n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_message"}})
+		return fmt.Errorf("invalid auth message")
 	}
 
 	payloadData, _ := json.Marshal(msg.Payload)
 	var auth AuthPayload
 	json.Unmarshal(payloadData, &auth)
 	auth.Token = normalizeToken(auth.Token)
+	if auth.DeviceID == "" {
+		n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_payload"}})
+		return fmt.Errorf("missing device id")
+	}
 
 	if n.IsAuthRequired() {
 		if auth.Token == "" {
 			n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "token_required"}})
 			time.Sleep(100 * time.Millisecond)
-			conn.Close()
-			return
+			return fmt.Errorf("token required")
 		}
 		if auth.Token != normalizeToken(n.token) {
 			n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "invalid_token"}})
 			time.Sleep(100 * time.Millisecond)
-			conn.Close()
-			return
+			return fmt.Errorf("invalid token")
 		}
 	}
 
 	client.authed = true
-	client.device = Device{
-		ID:       auth.DeviceID,
-		Name:     auth.DeviceName,
-		Role:     "spoke",
-		JoinedAt: nowMs(),
-	}
+	client.device = Device{ID: auth.DeviceID, Name: auth.DeviceName, Role: "spoke", JoinedAt: nowMs()}
 	conn.SetReadDeadline(time.Time{})
 
 	n.clientsMu.Lock()
@@ -261,20 +306,19 @@ func (n *Node) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	n.devices[auth.DeviceID] = client.device
 	n.devicesMu.Unlock()
 
-	log.Printf("[hub] device %s (%s) connected", auth.DeviceName, auth.DeviceID[:8])
-
-	// Send auth ok + full sync
-	n.sendToClient(client, WSMessage{Type: "auth_ok"})
-	syncData := SyncPayload{
-		Panes:   n.store.GetPanes(),
-		Devices: n.getDevices(),
+	shortID := auth.DeviceID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
 	}
+	log.Printf("[hub] device %s (%s) connected", auth.DeviceName, shortID)
+
+	n.sendToClient(client, WSMessage{Type: "auth_ok"})
+	syncData := SyncPayload{Panes: n.store.GetPanes(), Devices: n.getDevices()}
 	n.sendToClient(client, WSMessage{Type: "sync", Payload: syncData})
 	n.broadcastDevices()
 	n.notifySSE()
-
-	// Read loop
 	n.hubReadLoop(client)
+	return nil
 }
 
 func (n *Node) hubReadLoop(client *Client) {
@@ -387,9 +431,17 @@ func (n *Node) runSpoke() {
 		default:
 		}
 
+		if n.hasHubConn() {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
 		err := n.connectToHub()
 		if err != nil {
 			log.Printf("[spoke] connection lost: %v", err)
+			if n.hubAddr != "" {
+				SendReverseOffer(n.store.config.DeviceID, n.port, n.hubID)
+			}
 		}
 
 		select {
@@ -400,10 +452,11 @@ func (n *Node) runSpoke() {
 
 		// Re-discover hub (it may have changed IP or another device became hub)
 		log.Println("[spoke] re-discovering hub...")
-		hubAddr, _, _ := DiscoverHub(n.store.config.DeviceID, 3*time.Second)
+		hubAddr, hubID, _ := DiscoverHub(n.store.config.DeviceID, 3*time.Second)
 		if hubAddr != "" {
 			n.roleMu.Lock()
 			n.hubAddr = hubAddr
+			n.hubID = hubID
 			n.roleMu.Unlock()
 			backoff = 1 * time.Second
 			log.Printf("[spoke] found hub at %s", hubAddr)
@@ -442,14 +495,28 @@ func (n *Node) connectToHub() error {
 	if err != nil {
 		return err
 	}
+	return n.runSpokeConn(conn, true)
+}
 
+func (n *Node) hasHubConn() bool {
 	n.hubConnMu.Lock()
+	defer n.hubConnMu.Unlock()
+	return n.hubConn != nil
+}
+
+func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
+	n.hubConnMu.Lock()
+	if n.hubConn != nil && n.hubConn != conn {
+		n.hubConn.Close()
+	}
 	n.hubConn = conn
 	n.hubConnMu.Unlock()
 
 	defer func() {
 		n.hubConnMu.Lock()
-		n.hubConn = nil
+		if n.hubConn == conn {
+			n.hubConn = nil
+		}
 		n.hubConnMu.Unlock()
 		conn.Close()
 	}()
@@ -461,19 +528,13 @@ func (n *Node) connectToHub() error {
 	})
 	go n.spokePinger(conn)
 
-	// Auth
-	token := normalizeToken(n.store.config.SavedToken)
-	auth := WSMessage{
-		Type: "auth",
-		Payload: AuthPayload{
-			Token:      token,
-			DeviceID:   n.store.config.DeviceID,
-			DeviceName: n.store.config.DeviceName,
-		},
-	}
-	data, _ := json.Marshal(auth)
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-		return err
+	if sendAuth {
+		token := normalizeToken(n.store.config.SavedToken)
+		auth := WSMessage{Type: "auth", Payload: AuthPayload{Token: token, DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName}}
+		data, _ := json.Marshal(auth)
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			return err
+		}
 	}
 
 	// Read loop

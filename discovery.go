@@ -15,10 +15,11 @@ const (
 
 type DiscoveryMsg struct {
 	Magic    string `json:"m"`
-	Type     string `json:"t"` // "seek", "hub", "hub_announce"
+	Type     string `json:"t"` // "seek", "hub", "hub_announce", "reverse_offer"
 	DeviceID string `json:"d"`
 	Port     int    `json:"p"`
 	IP       string `json:"i,omitempty"`
+	TargetID string `json:"x,omitempty"`
 }
 
 // DiscoverHub sends UDP broadcasts and waits for a hub response.
@@ -74,7 +75,7 @@ func broadcastAll(conn net.PacketConn, data []byte) {
 
 // RunDiscoveryListener listens for broadcasts and responds as hub.
 // Sends collision events when another hub is detected.
-func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- DiscoveryMsg, stopCh <-chan struct{}) {
+func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- DiscoveryMsg, reverseCh chan<- DiscoveryMsg, stopCh <-chan struct{}) {
 	var conn net.PacketConn
 	var err error
 	for attempts := 0; attempts < 5; attempts++ {
@@ -128,8 +129,37 @@ func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- Disc
 			case collisionCh <- msg:
 			default:
 			}
+
+		case "reverse_offer":
+			if msg.TargetID != "" && msg.TargetID != deviceID {
+				continue
+			}
+			host, _, _ := net.SplitHostPort(remoteAddr.String())
+			msg.IP = host
+			select {
+			case reverseCh <- msg:
+			default:
+			}
 		}
 	}
+}
+
+func SendReverseOffer(deviceID string, httpPort int, targetHubID string) {
+	conn, err := net.ListenPacket("udp4", ":0")
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	msg := DiscoveryMsg{
+		Magic:    MagicHeader,
+		Type:     "reverse_offer",
+		DeviceID: deviceID,
+		Port:     httpPort,
+		TargetID: targetHubID,
+	}
+	data, _ := json.Marshal(msg)
+	broadcastAll(conn, data)
 }
 
 // AnnounceHub periodically broadcasts hub presence for collision detection.

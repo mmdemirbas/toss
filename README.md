@@ -17,8 +17,9 @@ Open `http://localhost:7753` in your browser. That's it.
 
 1. **First device** starts → becomes the **hub**, shows a 6-character access code
 2. **Other devices** start → auto-discover the hub via UDP broadcast, connect as **spokes**
-3. If auth is required, enter the access code on each spoke (one-time, saved for reconnects)
-4. All panes sync in real-time across all devices
+3. If direct spoke -> hub connection is blocked, spoke asks hub to dial back (reverse connect)
+4. If auth is required, enter the access code on each spoke (one-time, saved for reconnects)
+5. All panes sync in real-time across all devices
 
 ## Features
 
@@ -31,6 +32,8 @@ Open `http://localhost:7753` in your browser. That's it.
 - **Multi-device** — not limited to two devices
 - **Auto-discovery** — devices find each other via UDP broadcast, no IP address needed
 - **Configurable auth** — run with optional auth for frictionless LAN use, or require a token
+- **Dual-direction connect fallback** — handles one-way firewall rules better by trying reverse hub -> spoke dialing
+- **HTTPS UI/API** — optional built-in TLS listener for browser access
 - **Offline persistence** — panes persist locally, survive restarts
 
 ## Architecture
@@ -59,9 +62,12 @@ Hub-Spoke with auto-election:
 go run . -port 8080   # Use a different port (default: 7753)
 go run . -auth optional
 go run . -auth required
+go run . -https=true -https-port 8443
 ```
 
 Default auth mode is `optional` (stored in `~/.lanpane/config.json` as `authMode`).
+
+By default, HTTPS is enabled on `port+1` using a generated self-signed certificate in `~/.lanpane/certs/`.
 
 ## Data Storage
 

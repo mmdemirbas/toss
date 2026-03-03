@@ -32,19 +32,21 @@ func SetupHTTP(node *Node) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		role := node.GetRole()
 		status := map[string]interface{}{
-			"role":       role,
-			"deviceId":   node.store.config.DeviceID,
-			"deviceName": node.store.config.DeviceName,
-			"token":      "",
-			"hubAddr":    node.hubAddr,
-			"devices":    node.getDevices(),
-			"panes":      node.store.GetPanes(),
-			"needsToken": false,
+			"role":         role,
+			"deviceId":     node.store.config.DeviceID,
+			"deviceName":   node.store.config.DeviceName,
+			"token":        "",
+			"hubAddr":      node.hubAddr,
+			"devices":      node.getDevices(),
+			"panes":        node.store.GetPanes(),
+			"needsToken":   false,
+			"authMode":     node.store.config.AuthMode,
+			"authRequired": node.IsAuthRequired(),
 		}
 		if role == "hub" {
 			status["token"] = node.token
 		}
-		if role == "spoke" && node.store.config.SavedToken == "" {
+		if role == "spoke" && node.IsAuthRequired() && (normalizeToken(node.store.config.SavedToken) == "" || node.SpokeNeedsToken()) {
 			status["needsToken"] = true
 		}
 		json.NewEncoder(w).Encode(status)
@@ -60,12 +62,13 @@ func SetupHTTP(node *Node) http.Handler {
 			Token string `json:"token"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		body.Token = strings.TrimSpace(strings.ToUpper(body.Token))
-		if body.Token == "" {
+		body.Token = normalizeToken(body.Token)
+		if node.IsAuthRequired() && body.Token == "" {
 			http.Error(w, "token required", 400)
 			return
 		}
 		node.store.SetSavedToken(body.Token)
+		node.setSpokeNeedsToken(false)
 		// Force reconnect
 		node.hubConnMu.Lock()
 		if node.hubConn != nil {

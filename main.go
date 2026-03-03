@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
 
 func main() {
 	port := flag.Int("port", 7753, "HTTP/WebSocket port")
+	authMode := flag.String("auth", "", "Auth mode: optional or required (defaults to value in config, first run is optional)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime | log.Lshortfile)
@@ -22,6 +24,9 @@ func main() {
 	store, err := NewStore()
 	if err != nil {
 		log.Fatalf("failed to init store: %v", err)
+	}
+	if mode := strings.TrimSpace(*authMode); mode != "" {
+		store.SetAuthMode(mode)
 	}
 
 	node := NewNode(store, *port)
@@ -43,6 +48,7 @@ func main() {
 		fmt.Printf("  │  Role:  SPOKE                           │\n")
 		fmt.Printf("  │  Hub:   %-33s│\n", node.hubAddr)
 	}
+	fmt.Printf("  │  Auth:  %-10s                        │\n", strings.ToUpper(store.config.AuthMode))
 	fmt.Printf("  │  Open:  %-33s│\n", url)
 	fmt.Printf("  │  OS:    %-10s                        │\n", runtime.GOOS)
 	fmt.Println("  ╰─────────────────────────────────────────╯")

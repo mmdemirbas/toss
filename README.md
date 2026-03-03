@@ -17,7 +17,7 @@ Open `http://localhost:7753` in your browser. That's it.
 
 1. **First device** starts → becomes the **hub**, shows a 6-character access code
 2. **Other devices** start → auto-discover the hub via UDP broadcast, connect as **spokes**
-3. Enter the access code on each spoke (one-time, saved for reconnects)
+3. If auth is required, enter the access code on each spoke (one-time, saved for reconnects)
 4. All panes sync in real-time across all devices
 
 ## Features
@@ -30,7 +30,7 @@ Open `http://localhost:7753` in your browser. That's it.
 - **Markdown rendering** — toggle to "md" mode for rendered markdown
 - **Multi-device** — not limited to two devices
 - **Auto-discovery** — devices find each other via UDP broadcast, no IP address needed
-- **Token auth** — auto-generated access code prevents unauthorized access
+- **Configurable auth** — run with optional auth for frictionless LAN use, or require a token
 - **Offline persistence** — panes persist locally, survive restarts
 
 ## Architecture
@@ -57,12 +57,16 @@ Hub-Spoke with auto-election:
 
 ```
 go run . -port 8080   # Use a different port (default: 7753)
+go run . -auth optional
+go run . -auth required
 ```
+
+Default auth mode is `optional` (stored in `~/.lanpane/config.json` as `authMode`).
 
 ## Data Storage
 
 All data is stored in `~/.lanpane/`:
-- `config.json` — device ID, name, saved token
+- `config.json` — device ID, name, token settings (`savedToken`, `authMode`)
 - `panes.json` — all pane content
 - `files/` — uploaded files and images
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -12,6 +13,7 @@ type Config struct {
 	DeviceName string `json:"deviceName"`
 	Token      string `json:"token"`
 	SavedToken string `json:"savedToken"`
+	AuthMode   string `json:"authMode"`
 }
 
 type Store struct {
@@ -52,11 +54,33 @@ func (s *Store) loadConfig() {
 		s.config = Config{
 			DeviceID:   generateID(),
 			DeviceName: hostname,
+			AuthMode:   "optional",
 		}
 		s.saveConfig()
 		return
 	}
 	json.Unmarshal(data, &s.config)
+	s.normalizeConfig()
+	s.saveConfig()
+}
+
+func (s *Store) normalizeConfig() {
+	if s.config.DeviceID == "" {
+		s.config.DeviceID = generateID()
+	}
+	if s.config.DeviceName == "" {
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			hostname = "device-" + generateID()[:4]
+		}
+		s.config.DeviceName = hostname
+	}
+	mode := strings.ToLower(strings.TrimSpace(s.config.AuthMode))
+	if mode != "required" && mode != "optional" {
+		s.config.AuthMode = "optional"
+		return
+	}
+	s.config.AuthMode = mode
 }
 
 func (s *Store) saveConfig() {
@@ -135,6 +159,15 @@ func (s *Store) SetToken(token string) {
 
 func (s *Store) SetSavedToken(token string) {
 	s.config.SavedToken = token
+	s.saveConfig()
+}
+
+func (s *Store) SetAuthMode(mode string) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "required" && mode != "optional" {
+		return
+	}
+	s.config.AuthMode = mode
 	s.saveConfig()
 }
 

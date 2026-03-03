@@ -9,16 +9,108 @@ let state = {
   deviceId: '',
   needsToken: false,
   connected: false,
+  previewing: false, // preview toggle
 };
 
+let autoNameTimer = null;
 let saveTimer = null;
 let eventSource = null;
-let isEditing = false; // tracks if user is actively typing
+let autoDetectTimer = null;
+let highlightFrame = null;
+let lastHighlightKey = '';
+
+function scheduleAutoName(pane) {
+  // Only auto-name if pane doesn't have an explicit name
+  if ((pane.name || '').trim()) return;
+  
+  clearTimeout(autoNameTimer);
+  autoNameTimer = setTimeout(() => {
+    const name = generateAutoName(pane.content);
+    if (name) {
+      pane.name = name;
+      document.getElementById('pane-name').value = name;
+      debouncedSave(pane);
+      renderSidebar();
+    }
+  }, 1500);
+}
+
+function generateAutoName(content) {
+  if (!content || content.trim().length === 0) return null;
+  
+  const lines = content.trim().split('\n');
+  const firstLine = lines[0].trim();
+  
+  if (!firstLine) return null;
+  
+  // For markdown, try to get heading
+  if (firstLine.match(/^#+\s+/)) {
+    return firstLine.replace(/^#+\s+/, '').substring(0, 40);
+  }
+  
+  // For code, try to get function/class name or first meaningful line
+  if (firstLine.length > 0) {
+    let name = firstLine;
+    // Remove common language keywords and punctuation
+    name = name.replace(/^(const|let|var|function|class|def|func|public|private|protected|async|await)\s+/, '');
+    name = name.replace(/[{};:=]/g, '');
+    name = name.trim();
+    
+    if (name.length > 0 && name.length <= 40) {
+      return name;
+    }
+  }
+  
+  // Fallback: use first line, truncated
+  if (firstLine.length > 0) {
+    return firstLine.substring(0, 40).trim();
+  }
+  
+  return null;
+}
+
+// ---- Language detection ----
+const langPatterns = [
+  { lang: 'markdown',   test: s => /^#{1,6}\s|^\*\*|^\- \[|^\|.*\|$|!\[.*\]\(|^\>\s/m.test(s) },
+  { lang: 'json',       test: s => { try { if (/^\s*[\[{]/.test(s)) { JSON.parse(s); return true; } } catch(e) {} return false; } },
+  { lang: 'yaml',       test: s => /^[\w-]+:\s/m.test(s) && !/<\w/.test(s) && /\n[\w-]+:\s/m.test(s) },
+  { lang: 'html',       test: s => /^\s*<!DOCTYPE|^\s*<html|<\/?(div|span|p|h[1-6]|body|head|script|style|link)\b/im.test(s) },
+  { lang: 'xml',        test: s => /^\s*<\?xml/i.test(s) || (/^\s*<[\w:-]+/.test(s) && /<\/[\w:-]+>\s*$/.test(s.trim())) },
+  { lang: 'css',        test: s => /[\w.#][\w\-.*#]*\s*\{[^}]*[:;]/.test(s) && !/\bfunction\b/.test(s) },
+  { lang: 'sql',        test: s => /\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER|DROP|FROM|WHERE|JOIN)\b/i.test(s) },
+  { lang: 'dockerfile', test: s => /^FROM\s+\S+/m.test(s) && /^(RUN|CMD|COPY|EXPOSE|WORKDIR|ENV|ENTRYPOINT)\s/m.test(s) },
+  { lang: 'makefile',   test: s => /^[\w\-.]+:\s*/m.test(s) && /\t/.test(s) },
+  { lang: 'bash',       test: s => /^#!\s*\/bin\/(ba)?sh/m.test(s) || (/\b(echo|export|if\s+\[|then|fi|done|for\s+\w+\s+in)\b/.test(s) && /[\$\|]/.test(s)) },
+  { lang: 'go',         test: s => /^package\s+\w+/m.test(s) || (/\bfunc\s+[\w(]/.test(s) && /\b(import|fmt|error)\b/.test(s)) },
+  { lang: 'rust',       test: s => /\bfn\s+\w+/.test(s) && /\b(let\s+mut|impl|pub\s+fn|use\s+\w|::)\b/.test(s) },
+  { lang: 'python',     test: s => /\b(def\s+\w+|import\s+\w+|from\s+\w+\s+import|if\s+__name__)\b/.test(s) && /:$/.test(s.split('\n').find(l => /\b(def|class|if|for|while)\b/.test(l)) || '') },
+  { lang: 'kotlin',     test: s => /\b(fun\s+\w+|val\s+\w+|var\s+\w+|package\s+\w+)\b/.test(s) && /\b(override|suspend|companion)\b/.test(s) },
+  { lang: 'swift',      test: s => /\b(func\s+\w+|let\s+\w+|var\s+\w+|import\s+\w+)\b/.test(s) && /\b(guard|struct|enum|protocol)\b/.test(s) },
+  { lang: 'java',       test: s => /\b(public|private|protected)\s+(static\s+)?(void|class|int|String)\b/.test(s) },
+  { lang: 'typescript',  test: s => /\b(interface\s+\w+|type\s+\w+\s*=|:\s*(string|number|boolean|void)\b)/.test(s) },
+  { lang: 'javascript', test: s => /\b(const|let|var|function|=>|require\(|import\s.*from)\b/.test(s) },
+  { lang: 'php',        test: s => /<\?php|\$\w+\s*=/.test(s) },
+  { lang: 'ruby',       test: s => /\b(def\s+\w+|end$|require\s+'|puts\s)/m.test(s) },
+  { lang: 'toml',       test: s => /^\[[\w.]+\]\s*$/m.test(s) && /^\w+\s*=\s*/m.test(s) },
+];
+
+function detectLanguage(content) {
+  if (!content || content.trim().length < 5) return null;
+  const trimmed = content.trim();
+  for (const { lang, test } of langPatterns) {
+    try { if (test(trimmed)) return lang; } catch(e) {}
+  }
+  return null;
+}
 
 // ---- Init ----
 async function init() {
   await fetchStatus();
-  setupEventSource();
+  try {
+    setupEventSource();
+  } catch (e) {
+    state.connected = false;
+  }
   setupListeners();
   render();
 }
@@ -43,7 +135,7 @@ async function fetchStatus() {
 async function createPane(opts = {}) {
   const pane = {
     name: opts.name || '',
-    type: opts.type || 'markdown',
+    type: 'code',
     content: opts.content || '',
     language: opts.language || 'plaintext',
   };
@@ -55,6 +147,7 @@ async function createPane(opts = {}) {
   const created = await res.json();
   state.panes.unshift(created);
   state.selectedPaneId = created.id;
+  state.previewing = false;
   render();
   focusEditor();
   return created;
@@ -73,7 +166,10 @@ async function updatePane(pane) {
 async function deletePane(id) {
   await fetch(API + '/api/panes/' + id, { method: 'DELETE' });
   state.panes = state.panes.filter(p => p.id !== id);
-  if (state.selectedPaneId === id) state.selectedPaneId = null;
+  if (state.selectedPaneId === id) {
+    state.selectedPaneId = null;
+    state.previewing = false;
+  }
   render();
 }
 
@@ -110,10 +206,15 @@ function setupEventSource() {
       state.selectedPaneId = selId;
       renderSidebar();
       renderStatusBar();
-      // Update editor only if not actively editing
-      if (!isEditing) {
+      // Sync editor if not focused
+      const editor = document.getElementById('editor');
+      if (editor && document.activeElement !== editor) {
         const pane = getSelectedPane();
-        if (pane) syncEditorContent(pane);
+        if (pane) {
+          editor.value = pane.content || '';
+          if (state.previewing) renderPreview(pane);
+          else renderEditorHighlight(pane);
+        }
       }
     } catch (err) {}
   };
@@ -146,7 +247,7 @@ function renderSidebar() {
   const list = document.getElementById('pane-list');
   list.innerHTML = state.panes.map(p => {
     const active = p.id === state.selectedPaneId ? 'active' : '';
-    const icon = p.type === 'code' ? '⟨⟩' : '◈';
+    const icon = langIcon(p.language);
     const name = p.name || 'Untitled';
     const time = timeAgo(p.updatedAt);
     return `<div class="pane-item ${active}" data-id="${p.id}">
@@ -156,18 +257,11 @@ function renderSidebar() {
     </div>`;
   }).join('');
 
-  // Hub token
   const tokenArea = document.getElementById('hub-token-area');
-  if (state.role === 'hub' && state.token) {
-    tokenArea.innerHTML = `<div class="hub-token">
-      <span class="hub-token-label">Code</span>
-      <span class="hub-token-value">${state.token}</span>
-    </div>`;
-  } else {
-    tokenArea.innerHTML = '';
-  }
+  tokenArea.innerHTML = (state.role === 'hub' && state.token)
+    ? `<div class="hub-token"><span class="hub-token-label">Code</span><span class="hub-token-value">${state.token}</span></div>`
+    : '';
 
-  // Devices
   const devList = document.getElementById('device-list');
   devList.innerHTML = state.devices.map(d => {
     const self = d.id === state.deviceId ? ' (you)' : '';
@@ -184,7 +278,7 @@ function renderStatusBar() {
   const text = document.querySelector('.status-text');
   if (state.connected) {
     dot.className = 'status-dot connected';
-    text.textContent = state.role === 'hub' ? 'hub' : 'spoke · connected';
+    text.textContent = state.role === 'hub' ? 'hub' : 'spoke';
   } else {
     dot.className = 'status-dot error';
     text.textContent = 'disconnected';
@@ -205,98 +299,122 @@ function renderEditor() {
   empty.classList.add('hidden');
   view.classList.remove('hidden');
 
-  // Name
   const nameInput = document.getElementById('pane-name');
-  if (document.activeElement !== nameInput) {
-    nameInput.value = pane.name || '';
-  }
+  if (document.activeElement !== nameInput) nameInput.value = pane.name || '';
 
-  // Mode buttons
-  document.querySelectorAll('.mode-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === pane.type);
-  });
-
-  // Language selector
+  // Language dropdown
   const langSel = document.getElementById('lang-select');
-  langSel.classList.toggle('hidden', pane.type !== 'code');
-  if (pane.type === 'code') {
-    langSel.value = pane.language || 'plaintext';
-  }
+  langSel.value = pane.language || 'plaintext';
+
+  // Preview toggle
+  const previewBtn = document.getElementById('preview-btn');
+  previewBtn.classList.toggle('active', state.previewing);
 
   // Editor & preview
   const editor = document.getElementById('editor');
+  const editorLayer = document.getElementById('editor-layer');
   const preview = document.getElementById('preview');
 
-  if (pane.type === 'code') {
-    // Code mode: always show textarea
-    editor.style.display = '';
+  if (state.previewing) {
+    editorLayer.style.display = 'none';
+    preview.classList.remove('hidden');
+    renderPreview(pane);
+  } else {
+    editorLayer.style.display = '';
     preview.classList.add('hidden');
     if (document.activeElement !== editor) {
       editor.value = pane.content || '';
     }
+    renderEditorHighlight(pane);
+  }
+}
+
+function renderPreview(pane) {
+  const preview = document.getElementById('preview');
+  const content = pane.content || '';
+  const lang = pane.language || 'plaintext';
+
+  if (lang === 'markdown') {
+    try {
+      preview.innerHTML = marked.parse(content);
+      preview.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+    } catch (e) {
+      preview.textContent = content;
+    }
+  } else if (lang === 'plaintext') {
+    preview.innerHTML = `<pre style="white-space:pre-wrap;margin:0">${esc(content)}</pre>`;
   } else {
-    // Markdown mode
-    if (isEditing) {
-      // Editing: show textarea
-      editor.style.display = '';
-      preview.classList.add('hidden');
-      if (document.activeElement !== editor) {
-        editor.value = pane.content || '';
-      }
-    } else if (pane.content && pane.content.trim()) {
-      // Has content, show rendered preview
-      editor.style.display = 'none';
-      preview.classList.remove('hidden');
-      renderMarkdown(pane.content, preview);
-    } else {
-      // Empty, show textarea for input
-      editor.style.display = '';
-      preview.classList.add('hidden');
-      editor.value = '';
+    try {
+      const result = hljs.highlight(content, { language: lang, ignoreIllegals: true });
+      preview.innerHTML = `<pre><code class="hljs language-${lang}">${result.value}</code></pre>`;
+    } catch (e) {
+      preview.innerHTML = `<pre><code>${esc(content)}</code></pre>`;
     }
   }
 }
 
-function syncEditorContent(pane) {
-  const editor = document.getElementById('editor');
-  if (document.activeElement !== editor) {
-    editor.value = pane.content || '';
-  }
-  if (pane.type === 'markdown' && !isEditing && pane.content && pane.content.trim()) {
-    const preview = document.getElementById('preview');
-    editor.style.display = 'none';
-    preview.classList.remove('hidden');
-    renderMarkdown(pane.content, preview);
-  }
+function renderEditorHighlight(pane) {
+  if (highlightFrame) cancelAnimationFrame(highlightFrame);
+  highlightFrame = requestAnimationFrame(() => {
+    const codeEl = document.getElementById('editor-highlight-code');
+    const editor = document.getElementById('editor');
+    if (!codeEl || !editor || !pane) return;
+
+    const content = editor.value || pane.content || '';
+    const lang = pane.language || 'plaintext';
+    const key = `${lang}\n${content}`;
+    if (key === lastHighlightKey) return;
+    lastHighlightKey = key;
+
+    if (!content) {
+      codeEl.className = 'hljs language-plaintext';
+      codeEl.innerHTML = '';
+      return;
+    }
+
+    try {
+      if (lang === 'plaintext') {
+        codeEl.className = 'hljs language-plaintext';
+        codeEl.innerHTML = esc(content);
+      } else {
+        const result = hljs.highlight(content, { language: lang, ignoreIllegals: true });
+        codeEl.className = `hljs language-${lang}`;
+        codeEl.innerHTML = result.value;
+      }
+    } catch (e) {
+      codeEl.className = 'hljs language-plaintext';
+      codeEl.innerHTML = esc(content);
+    }
+
+    if (content.endsWith('\n')) {
+      codeEl.innerHTML += '\n';
+    }
+
+    syncEditorScroll();
+  });
 }
 
-function renderMarkdown(content, el) {
-  try {
-    el.innerHTML = marked.parse(content);
-    el.querySelectorAll('pre code').forEach(block => {
-      hljs.highlightElement(block);
-    });
-  } catch (e) {
-    el.textContent = content;
-  }
+function syncEditorScroll() {
+  const editor = document.getElementById('editor');
+  const highlight = document.getElementById('editor-highlight');
+  if (!editor || !highlight) return;
+  highlight.scrollTop = editor.scrollTop;
+  highlight.scrollLeft = editor.scrollLeft;
 }
 
 // ---- Listeners ----
 function setupListeners() {
-  // New pane
   document.getElementById('new-pane-btn').addEventListener('click', () => createPane());
 
-  // Pane list click
   document.getElementById('pane-list').addEventListener('click', (e) => {
     const item = e.target.closest('.pane-item');
     if (item) {
-      isEditing = false;
       state.selectedPaneId = item.dataset.id;
+      state.previewing = false;
       render();
     }
   });
 
-  // Pane name
   document.getElementById('pane-name').addEventListener('input', (e) => {
     const pane = getSelectedPane();
     if (pane) {
@@ -306,47 +424,35 @@ function setupListeners() {
     }
   });
 
-  // Mode switch
-  document.querySelectorAll('.mode-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const pane = getSelectedPane();
-      if (!pane) return;
-      pane.type = btn.dataset.mode;
-      if (pane.type === 'code' && !pane.language) pane.language = 'plaintext';
-      isEditing = false;
-      savePaneNow(pane);
-      renderEditor();
-    });
-  });
-
   // Language selector
   document.getElementById('lang-select').addEventListener('change', (e) => {
     const pane = getSelectedPane();
     if (pane) {
       pane.language = e.target.value;
       debouncedSave(pane);
+      if (state.previewing) renderPreview(pane);
+      else renderEditorHighlight(pane);
     }
   });
+
+  // Preview toggle
+  document.getElementById('preview-btn').addEventListener('click', togglePreview);
 
   // Editor input
   const editor = document.getElementById('editor');
   editor.addEventListener('input', () => {
     const pane = getSelectedPane();
-    if (pane) {
-      pane.content = editor.value;
-      debouncedSave(pane);
-    }
-  });
-  editor.addEventListener('focus', () => { isEditing = true; });
-  editor.addEventListener('blur', () => {
-    isEditing = false;
-    const pane = getSelectedPane();
-    if (pane && pane.type === 'markdown') {
-      renderEditor(); // switch to preview
-    }
+    if (!pane) return;
+    pane.content = editor.value;
+    debouncedSave(pane);
+    scheduleAutoDetect(pane);
+    scheduleAutoName(pane);
+    renderEditorHighlight(pane);
   });
 
-  // Tab key in editor
+  editor.addEventListener('scroll', syncEditorScroll);
+
+  // Tab key
   editor.addEventListener('keydown', (e) => {
     if (e.key === 'Tab') {
       e.preventDefault();
@@ -358,17 +464,8 @@ function setupListeners() {
     }
   });
 
-  // Click preview to edit
-  document.getElementById('preview').addEventListener('click', (e) => {
-    // Don't switch to edit if clicking a link or image
-    if (e.target.tagName === 'A' || e.target.tagName === 'IMG') return;
-    const pane = getSelectedPane();
-    if (pane && pane.type === 'markdown') {
-      isEditing = true;
-      renderEditor();
-      focusEditor();
-    }
-  });
+  // Preview selection allowed - no toggle on click
+  // (user should use the button to exit preview, allowing copy/selection)
 
   // Copy
   document.getElementById('copy-btn').addEventListener('click', () => {
@@ -392,13 +489,10 @@ function setupListeners() {
     if (val) submitToken(val);
   });
   document.getElementById('token-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const val = e.target.value.trim();
-      if (val) submitToken(val);
-    }
+    if (e.key === 'Enter') { const val = e.target.value.trim(); if (val) submitToken(val); }
   });
 
-  // Global paste (image handling)
+  // Global paste
   document.addEventListener('paste', handlePaste);
 
   // Drag and drop
@@ -410,11 +504,31 @@ function setupListeners() {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); createPane(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
       e.preventDefault();
-      createPane();
+      if (getSelectedPane()) togglePreview();
     }
   });
+}
+
+function togglePreview() {
+  state.previewing = !state.previewing;
+  renderEditor();
+  if (!state.previewing) focusEditor();
+}
+
+function scheduleAutoDetect(pane) {
+  clearTimeout(autoDetectTimer);
+  autoDetectTimer = setTimeout(() => {
+    const detected = detectLanguage(pane.content);
+    if (detected && detected !== pane.language) {
+      pane.language = detected;
+      document.getElementById('lang-select').value = detected;
+      if (!state.previewing) renderEditorHighlight(pane);
+      // Don't save just for language change during typing — it'll save with next content save
+    }
+  }, 1500);
 }
 
 async function handlePaste(e) {
@@ -427,41 +541,37 @@ async function handlePaste(e) {
       const file = item.getAsFile();
       if (!file) continue;
 
-      // Upload the image
       const result = await uploadFile(file);
       const imgUrl = `/api/files/${result.fileId}`;
 
-      // Ensure we have a pane
       let pane = getSelectedPane();
       if (!pane) {
-        await createPane({ type: 'markdown', name: 'Image' });
+        await createPane({ language: 'markdown' });
         pane = getSelectedPane();
       }
 
-      // Insert markdown image reference into content
       const imgMd = `![${result.fileName || 'image'}](${imgUrl})`;
       const editor = document.getElementById('editor');
 
+      // If in preview, switch to edit first
+      if (state.previewing) {
+        state.previewing = false;
+        renderEditor();
+      }
+
       if (document.activeElement === editor) {
-        // Insert at cursor
         const start = editor.selectionStart;
-        const before = pane.content.substring(0, start);
-        const after = pane.content.substring(editor.selectionEnd);
-        pane.content = before + imgMd + '\n' + after;
+        pane.content = pane.content.substring(0, start) + imgMd + '\n' + pane.content.substring(editor.selectionEnd);
         editor.value = pane.content;
         editor.selectionStart = editor.selectionEnd = start + imgMd.length + 1;
       } else {
-        // Append
         pane.content = (pane.content ? pane.content + '\n\n' : '') + imgMd + '\n';
         editor.value = pane.content;
       }
 
-      // If it was markdown and in preview mode, switch to edit briefly then save
-      if (pane.type === 'markdown') {
-        isEditing = true;
-        renderEditor();
-      }
-
+      // Auto-detect will likely pick markdown
+      scheduleAutoDetect(pane);
+      scheduleAutoName(pane);
       await savePaneNow(pane);
       showToast('Image pasted');
       return;
@@ -477,26 +587,28 @@ async function handleDrop(e) {
 
   let pane = getSelectedPane();
   if (!pane) {
-    await createPane({ type: 'markdown', name: 'Files' });
+    await createPane({ language: 'markdown' });
     pane = getSelectedPane();
+  }
+
+  if (state.previewing) {
+    state.previewing = false;
+    renderEditor();
   }
 
   for (const file of files) {
     const result = await uploadFile(file);
     const url = `/api/files/${result.fileId}`;
-
-    let insertion;
-    if (file.type.startsWith('image/')) {
-      insertion = `![${result.fileName}](${url})`;
-    } else {
-      insertion = `[${result.fileName}](${url})`;
-    }
+    const insertion = file.type.startsWith('image/')
+      ? `![${result.fileName}](${url})`
+      : `[📎 ${result.fileName}](${url})`;
     pane.content = (pane.content ? pane.content + '\n\n' : '') + insertion + '\n';
   }
 
-  isEditing = false;
+  document.getElementById('editor').value = pane.content;
+  scheduleAutoDetect(pane);
+  scheduleAutoName(pane);
   await savePaneNow(pane);
-  renderEditor();
   showToast(`${files.length} file(s) added`);
 }
 
@@ -521,10 +633,25 @@ function sortPanes(panes) {
 }
 
 function focusEditor() {
-  setTimeout(() => {
-    const editor = document.getElementById('editor');
-    if (editor) { isEditing = true; editor.focus(); }
-  }, 50);
+  setTimeout(() => { const e = document.getElementById('editor'); if (e) e.focus(); }, 50);
+}
+
+function langIcon(lang) {
+  switch (lang) {
+    case 'markdown': return '◈';
+    case 'javascript': case 'typescript': return 'JS';
+    case 'python': return 'Py';
+    case 'go': return 'Go';
+    case 'rust': return 'Rs';
+    case 'java': case 'kotlin': return 'Jv';
+    case 'html': case 'css': return '◇';
+    case 'json': case 'yaml': case 'toml': return '{}';
+    case 'sql': return 'Sq';
+    case 'bash': return '$_';
+    case 'swift': return 'Sw';
+    case 'c': case 'cpp': return 'C';
+    default: return '··';
+  }
 }
 
 function esc(str) {
@@ -549,5 +676,4 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 2000);
 }
 
-// ---- Start ----
 document.addEventListener('DOMContentLoaded', init);

@@ -13,7 +13,6 @@
 </head>
 <body>
   <div id="app">
-    <!-- Token overlay -->
     <div id="token-overlay" class="overlay hidden">
       <div class="overlay-card">
         <div class="overlay-icon">🔑</div>
@@ -24,7 +23,6 @@
       </div>
     </div>
 
-    <!-- Sidebar -->
     <aside id="sidebar">
       <div class="sidebar-header">
         <div class="logo">
@@ -39,60 +37,60 @@
       <div class="sidebar-footer">
         <div id="hub-token-area"></div>
         <div class="device-list" id="device-list"></div>
-        <div class="status-bar" id="status-bar">
+        <div class="status-bar">
           <span class="status-dot"></span>
           <span class="status-text">connecting...</span>
         </div>
       </div>
     </aside>
 
-    <!-- Main content -->
     <main id="main-content">
       <div id="empty-state" class="empty-state">
         <div class="empty-icon">⬡</div>
         <h2>No pane selected</h2>
         <p>Create a new pane or select one from the sidebar.<br>Paste images or drop files anywhere.</p>
         <div class="shortcut-hints">
-          <kbd>Ctrl+N</kbd> new pane &nbsp; <kbd>Ctrl+V</kbd> paste image &nbsp; <kbd>Drop</kbd> files
+          <kbd>Ctrl+N</kbd> new &nbsp; <kbd>Ctrl+V</kbd> paste image &nbsp; <kbd>Drop</kbd> files
         </div>
       </div>
 
       <div id="pane-view" class="pane-view hidden">
-        <!-- Sticky toolbar -->
         <div class="pane-toolbar">
           <input type="text" id="pane-name" class="pane-name-input" placeholder="Untitled" spellcheck="false">
           <div class="toolbar-sep"></div>
-          <div class="mode-switch">
-            <button class="mode-btn" data-mode="code" title="Code mode">CODE</button>
-            <button class="mode-btn" data-mode="markdown" title="Markdown mode">MD</button>
-          </div>
           <select id="lang-select" class="lang-select">
             <option value="plaintext">plaintext</option>
-            <option value="javascript">javascript</option>
-            <option value="typescript">typescript</option>
-            <option value="python">python</option>
-            <option value="go">go</option>
-            <option value="rust">rust</option>
-            <option value="java">java</option>
-            <option value="kotlin">kotlin</option>
+            <option value="markdown">markdown</option>
+            <option disabled>------------</option>
+            <option value="bash">bash</option>
             <option value="c">c</option>
             <option value="cpp">cpp</option>
             <option value="csharp">csharp</option>
-            <option value="html">html</option>
             <option value="css">css</option>
-            <option value="json">json</option>
-            <option value="yaml">yaml</option>
-            <option value="xml">xml</option>
-            <option value="sql">sql</option>
-            <option value="bash">bash</option>
-            <option value="swift">swift</option>
-            <option value="ruby">ruby</option>
-            <option value="php">php</option>
             <option value="dart">dart</option>
             <option value="dockerfile">dockerfile</option>
+            <option value="go">go</option>
+            <option value="html">html</option>
+            <option value="java">java</option>
+            <option value="javascript">javascript</option>
+            <option value="json">json</option>
+            <option value="kotlin">kotlin</option>
             <option value="makefile">makefile</option>
+            <option value="php">php</option>
+            <option value="python">python</option>
+            <option value="ruby">ruby</option>
+            <option value="rust">rust</option>
+            <option value="sql">sql</option>
+            <option value="swift">swift</option>
             <option value="toml">toml</option>
+            <option value="typescript">typescript</option>
+            <option value="xml">xml</option>
+            <option value="yaml">yaml</option>
           </select>
+          <button id="preview-btn" class="preview-toggle" title="Toggle preview (Ctrl+P)">
+            <svg class="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Preview</span>
+          </button>
           <div class="toolbar-spacer"></div>
           <button id="copy-btn" class="tool-btn" title="Copy content">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -102,10 +100,12 @@
           </button>
         </div>
 
-        <!-- Content area -->
         <div class="pane-content">
-          <textarea id="editor" class="editor" placeholder="Start typing..." spellcheck="false"></textarea>
-          <div id="preview" class="preview hidden"></div>
+          <div id="editor-layer" class="editor-layer">
+            <pre id="editor-highlight" class="editor-highlight" aria-hidden="true"><code id="editor-highlight-code" class="hljs language-plaintext"></code></pre>
+            <textarea id="editor" class="editor" placeholder="Start typing..." spellcheck="false" wrap="off"></textarea>
+          </div>
+          <div id="preview" class="preview-output hidden"></div>
         </div>
       </div>
     </main>

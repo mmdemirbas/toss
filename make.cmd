@@ -2,7 +2,7 @@
 setlocal
 
 set BIN=bin
-set PKG=.\cmd\lanpane
+set PKG=.\cmd\toss
 
 if "%~1"=="" goto run
 if "%~1"=="run" goto run
@@ -21,7 +21,7 @@ exit /b %errorlevel%
 
 :build
 if not exist %BIN% mkdir %BIN%
-go build -o %BIN%\lanpane.exe %PKG%
+go build -o %BIN%\toss.exe %PKG%
 exit /b %errorlevel%
 
 :build-all
@@ -29,24 +29,24 @@ if not exist %BIN% mkdir %BIN%
 echo Building for all platforms...
 
 echo   darwin/arm64
-set GOOS=darwin& set GOARCH=arm64& go build -o %BIN%\lanpane-darwin-arm64 %PKG%
+set GOOS=darwin& set GOARCH=arm64& go build -o %BIN%\toss-darwin-arm64 %PKG%
 if errorlevel 1 goto fail
 
 echo   darwin/amd64
-set GOOS=darwin& set GOARCH=amd64& go build -o %BIN%\lanpane-darwin-amd64 %PKG%
+set GOOS=darwin& set GOARCH=amd64& go build -o %BIN%\toss-darwin-amd64 %PKG%
 if errorlevel 1 goto fail
 
 echo   windows/amd64
-set GOOS=windows& set GOARCH=amd64& go build -o %BIN%\lanpane-windows-amd64.exe %PKG%
+set GOOS=windows& set GOARCH=amd64& go build -o %BIN%\toss-windows-amd64.exe %PKG%
 if errorlevel 1 goto fail
 
 echo   linux/amd64
-set GOOS=linux& set GOARCH=amd64& go build -o %BIN%\lanpane-linux-amd64 %PKG%
+set GOOS=linux& set GOARCH=amd64& go build -o %BIN%\toss-linux-amd64 %PKG%
 if errorlevel 1 goto fail
 
 set GOOS=& set GOARCH=
 echo.
-dir /b %BIN%\lanpane-*
+dir /b %BIN%\toss-*
 exit /b 0
 
 :test
@@ -59,7 +59,7 @@ echo Cleaned.
 exit /b 0
 
 :vendor
-cd cmd\lanpane\web\vendor
+cd cmd\toss\web\vendor
 curl -sfL -o highlight.min.js  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
 curl -sfL -o github-dark.min.css "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
 curl -sfL -o marked.min.js     "https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"

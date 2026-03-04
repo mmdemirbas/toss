@@ -68,8 +68,8 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "lanpane.local",
-			Organization: []string{"LanPane"},
+			CommonName:   "toss.local",
+			Organization: []string{"Toss"},
 		},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(2, 0, 0),

@@ -10,7 +10,7 @@ import (
 
 const (
 	DiscoveryPort = 7754
-	MagicHeader   = "LANPANE1"
+	MagicHeader   = "TOSS1"
 )
 
 type DiscoveryMsg struct {

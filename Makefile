@@ -1,5 +1,5 @@
 BIN = bin
-PKG = ./cmd/lanpane
+PKG = ./cmd/toss
 
 .PHONY: run build build-all test clean vendor
 
@@ -10,17 +10,17 @@ run:
 # Build for current platform
 build:
 	@mkdir -p $(BIN)
-	go build -o $(BIN)/lanpane $(PKG)
+	go build -o $(BIN)/toss $(PKG)
 
 # Cross-compile for all platforms
 build-all:
 	@mkdir -p $(BIN)
-	GOOS=darwin  GOARCH=arm64 go build -o $(BIN)/lanpane-darwin-arm64      $(PKG)
-	GOOS=darwin  GOARCH=amd64 go build -o $(BIN)/lanpane-darwin-amd64      $(PKG)
-	GOOS=windows GOARCH=amd64 go build -o $(BIN)/lanpane-windows-amd64.exe $(PKG)
-	GOOS=linux   GOARCH=amd64 go build -o $(BIN)/lanpane-linux-amd64       $(PKG)
+	GOOS=darwin  GOARCH=arm64 go build -o $(BIN)/toss-darwin-arm64      $(PKG)
+	GOOS=darwin  GOARCH=amd64 go build -o $(BIN)/toss-darwin-amd64      $(PKG)
+	GOOS=windows GOARCH=amd64 go build -o $(BIN)/toss-windows-amd64.exe $(PKG)
+	GOOS=linux   GOARCH=amd64 go build -o $(BIN)/toss-linux-amd64       $(PKG)
 	@echo ""
-	@ls -lh $(BIN)/lanpane-*
+	@ls -lh $(BIN)/toss-*
 
 # Run tests
 test:
@@ -28,7 +28,7 @@ test:
 
 # Re-download vendored JS/CSS/fonts (only needed to update lib versions)
 vendor:
-	@cd cmd/lanpane/web/vendor && \
+	@cd cmd/toss/web/vendor && \
 	curl -sfL -o highlight.min.js  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" && \
 	curl -sfL -o github-dark.min.css "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" && \
 	curl -sfL -o marked.min.js     "https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js" && \

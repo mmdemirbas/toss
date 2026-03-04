@@ -1,4 +1,4 @@
-# LanPane
+# Toss
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -7,8 +7,8 @@ Share text, code, images, and files between devices on your local network. Zero 
 ## Quick Start
 
 ```bash
-git clone https://github.com/mmdemirbas/lanpane.git
-cd lanpane
+git clone https://github.com/mmdemirbas/toss.git
+cd toss
 make            # macOS / Linux
 make.cmd        # Windows
 ```
@@ -33,15 +33,15 @@ Both `make` (macOS/Linux) and `make.cmd` (Windows) support the same subcommands:
 Or use plain Go directly:
 
 ```bash
-go run ./cmd/lanpane                         # Run
-go build -o bin/lanpane ./cmd/lanpane        # Build
-go test ./cmd/lanpane                        # Test
+go run ./cmd/toss                        # Run
+go build -o bin/toss ./cmd/toss          # Build
+go test ./cmd/toss                       # Test
 ```
 
 ## Project Structure
 
 ```
-cmd/lanpane/        Go source (package main)
+cmd/toss/           Go source (package main)
   web/              Frontend (HTML/JS/CSS, embedded into binary)
     vendor/         Vendored JS/CSS/fonts (checked into git)
 Makefile            Build commands (macOS / Linux)
@@ -104,14 +104,14 @@ Hub-Spoke with auto-election:
 ## Options
 
 ```
-./bin/lanpane -port 8080    # Use a different port (default: 7753)
+./bin/toss -port 8080       # Use a different port (default: 7753)
 ```
 
-All traffic uses HTTPS with an auto-generated self-signed certificate stored in `~/.lanpane/certs/`. On first access, your browser will show a certificate warning — accept it once to proceed.
+All traffic uses HTTPS with an auto-generated self-signed certificate stored in `~/.toss/certs/`. On first access, your browser will show a certificate warning — accept it once to proceed.
 
 ## Data Storage
 
-All data is stored in `~/.lanpane/`:
+All data is stored in `~/.toss/`:
 - `config.json` — device ID and name
 - `panes.json` — all pane content
 - `files/` — uploaded files and images
@@ -119,7 +119,7 @@ All data is stored in `~/.lanpane/`:
 
 ## Security Notes
 
-LanPane is designed for **trusted local networks**.
+Toss is designed for **trusted local networks**.
 
 - **No authentication.** Any device on the LAN can connect and read/write panes. This is by design for zero-friction LAN sharing.
 - **WebSocket origin checks are disabled** to allow access from any local browser.

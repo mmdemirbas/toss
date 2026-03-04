@@ -1,4 +1,4 @@
-// LanPane Frontend
+// Toss Frontend
 const API = ''; // empty = same origin (requests go to the serving host)
 let state = {
   panes: [],
@@ -135,7 +135,7 @@ async function init() {
 
 function loadViewState() {
   try {
-    state.wrapEnabled = localStorage.getItem('lanpane.wrapEnabled') === '1';
+    state.wrapEnabled = localStorage.getItem('toss.wrapEnabled') === '1';
   } catch (e) {
     state.wrapEnabled = false;
   }
@@ -144,7 +144,7 @@ function loadViewState() {
 
 function loadSidebarState() {
   try {
-    state.sidebarCollapsed = localStorage.getItem('lanpane.sidebarCollapsed') === '1';
+    state.sidebarCollapsed = localStorage.getItem('toss.sidebarCollapsed') === '1';
   } catch (e) {
     state.sidebarCollapsed = false;
   }
@@ -165,7 +165,7 @@ function toggleSidebar() {
   state.sidebarCollapsed = !state.sidebarCollapsed;
   applySidebarState();
   try {
-    localStorage.setItem('lanpane.sidebarCollapsed', state.sidebarCollapsed ? '1' : '0');
+    localStorage.setItem('toss.sidebarCollapsed', state.sidebarCollapsed ? '1' : '0');
   } catch (e) {}
 }
 
@@ -184,7 +184,7 @@ function toggleWrap() {
   state.wrapEnabled = !state.wrapEnabled;
   applyWrapState();
   try {
-    localStorage.setItem('lanpane.wrapEnabled', state.wrapEnabled ? '1' : '0');
+    localStorage.setItem('toss.wrapEnabled', state.wrapEnabled ? '1' : '0');
   } catch (e) {}
 
   const pane = getSelectedPane();

@@ -39,7 +39,7 @@ func main() {
 	url := fmt.Sprintf("https://localhost:%d", *port)
 	fmt.Println()
 	fmt.Println("  ╭─────────────────────────────────────────╮")
-	fmt.Println("  │              L A N P A N E              │")
+	fmt.Println("  │                 T O S S                 │")
 	fmt.Println("  ├─────────────────────────────────────────┤")
 	role := node.GetRole()
 	if role == "hub" {

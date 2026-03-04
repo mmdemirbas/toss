@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,11 +20,12 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	conn   *websocket.Conn
-	device Device
-	sendCh chan []byte
-	mu     sync.Mutex
-	authed bool
+	conn     *websocket.Conn
+	device   Device
+	sendCh   chan []byte
+	mu       sync.Mutex
+	authed   bool
+	httpAddr string // "ip:port" of the client's HTTP server
 }
 
 type Node struct {
@@ -298,6 +302,12 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 	client.device = Device{ID: auth.DeviceID, Name: auth.DeviceName, Role: "spoke", JoinedAt: nowMs()}
 	conn.SetReadDeadline(time.Time{})
 
+	// Derive spoke HTTP address from WebSocket connection IP + auth port
+	if auth.Port > 0 {
+		remoteIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+		client.httpAddr = net.JoinHostPort(remoteIP, fmt.Sprintf("%d", auth.Port))
+	}
+
 	n.clientsMu.Lock()
 	n.clients[auth.DeviceID] = client
 	n.clientsMu.Unlock()
@@ -366,6 +376,18 @@ func (n *Node) hubReadLoop(client *Client) {
 			n.store.DeletePane(payload.PaneID)
 			n.broadcast(WSMessage{Type: "pane_delete", Payload: payload}, client.device.ID)
 			n.notifySSE()
+
+		case "file_notify":
+			payloadData, _ := json.Marshal(msg.Payload)
+			var payload FileNotifyPayload
+			json.Unmarshal(payloadData, &payload)
+			payload.SenderID = client.device.ID
+			// Hub: fetch the file from the spoke if we don't have it
+			if payload.FileID != "" {
+				go n.fetchFileFromAddr(payload.FileID, client.httpAddr)
+			}
+			// Relay to other spokes so they can pre-fetch on demand
+			n.broadcast(WSMessage{Type: "file_notify", Payload: payload}, client.device.ID)
 		}
 	}
 }
@@ -397,6 +419,19 @@ func (n *Node) getDevices() []Device {
 		devs = append(devs, d)
 	}
 	return devs
+}
+
+// getSpokeAddrs returns HTTP addresses of all connected spokes.
+func (n *Node) getSpokeAddrs() []string {
+	n.clientsMu.RLock()
+	defer n.clientsMu.RUnlock()
+	addrs := make([]string, 0, len(n.clients))
+	for _, c := range n.clients {
+		if c.authed && c.httpAddr != "" {
+			addrs = append(addrs, c.httpAddr)
+		}
+	}
+	return addrs
 }
 
 func (n *Node) sendToClient(client *Client, msg WSMessage) {
@@ -527,7 +562,7 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 
 	if sendAuth {
 		token := normalizeToken(n.store.config.SavedToken)
-		auth := WSMessage{Type: "auth", Payload: AuthPayload{Token: token, DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName}}
+		auth := WSMessage{Type: "auth", Payload: AuthPayload{Token: token, DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName, Port: n.port}}
 		data, _ := json.Marshal(auth)
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			return err
@@ -634,7 +669,48 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		}
 		n.devicesMu.Unlock()
 		n.notifySSE()
+
+	case "file_notify":
+		payloadData, _ := json.Marshal(msg.Payload)
+		var payload FileNotifyPayload
+		json.Unmarshal(payloadData, &payload)
+		// Pre-fetch the file from hub if we don't have it locally
+		if payload.FileID != "" {
+			go n.fetchFileFromAddr(payload.FileID, n.hubAddr)
+		}
 	}
+}
+
+// fetchFileFromAddr fetches a file from a remote node's HTTP server if not already local.
+func (n *Node) fetchFileFromAddr(fileID, addr string) {
+	if addr == "" || fileID == "" {
+		return
+	}
+	path := n.store.FilePath(fileID)
+	if _, err := os.Stat(path); err == nil {
+		return // already have it
+	}
+	url := fmt.Sprintf("http://%s/api/files/%s", addr, fileID)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return
+	}
+	defer resp.Body.Close()
+	dst, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	if _, err := io.Copy(dst, resp.Body); err != nil {
+		dst.Close()
+		os.Remove(path)
+		return
+	}
+	dst.Close()
+	log.Printf("[files] fetched %s from %s", fileID, addr)
 }
 
 // SendToHub sends a message to the hub (spoke mode).

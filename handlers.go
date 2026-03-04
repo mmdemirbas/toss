@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed web/*
@@ -213,9 +214,18 @@ func SetupHTTP(node *Node) http.Handler {
 			return
 		}
 
-		// Spoke → forward to hub
+		// Spoke → forward to hub and notify via WS
 		if node.GetRole() == "spoke" && node.hubAddr != "" {
-			go forwardFile(node, storedName, header.Filename)
+			go forwardFileWithRetry(node, storedName, header.Filename)
+		}
+		// Hub → notify all spokes about the new file
+		if node.GetRole() == "hub" {
+			notify := WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
+				FileID:   storedName,
+				FileName: header.Filename,
+				SenderID: node.store.config.DeviceID,
+			}}
+			node.broadcast(notify, "")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -237,22 +247,38 @@ func SetupHTTP(node *Node) http.Handler {
 		}
 		path := node.store.FilePath(fileID)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// Spoke: try fetching from hub
+			// Don't recurse: if a peer asked us, don't ask them back
+			if r.URL.Query().Get("norecurse") == "1" {
+				http.Error(w, "file not found", 404)
+				return
+			}
+			// Try fetching from peers
+			var addrs []string
 			if node.GetRole() == "spoke" && node.hubAddr != "" {
-				resp, err := http.Get(fmt.Sprintf("http://%s/api/files/%s", node.hubAddr, fileID))
-				if err == nil && resp.StatusCode == 200 {
-					defer resp.Body.Close()
-					dst, err := os.Create(path)
-					if err == nil {
-						if _, err := io.Copy(dst, resp.Body); err != nil {
-							dst.Close()
-							os.Remove(path)
-						} else {
-							dst.Close()
-							http.ServeFile(w, r, path)
-							return
-						}
+				addrs = []string{node.hubAddr}
+			} else if node.GetRole() == "hub" {
+				addrs = node.getSpokeAddrs()
+			}
+			for _, addr := range addrs {
+				resp, err := http.Get(fmt.Sprintf("http://%s/api/files/%s?norecurse=1", addr, fileID))
+				if err != nil || resp.StatusCode != 200 {
+					if resp != nil {
+						resp.Body.Close()
 					}
+					continue
+				}
+				defer resp.Body.Close()
+				dst, err := os.Create(path)
+				if err == nil {
+					if _, err := io.Copy(dst, resp.Body); err != nil {
+						dst.Close()
+						os.Remove(path)
+						continue
+					}
+					dst.Close()
+					log.Printf("[files] fetched %s from %s", fileID, addr)
+					http.ServeFile(w, r, path)
+					return
 				}
 			}
 			http.Error(w, "file not found", 404)
@@ -264,21 +290,57 @@ func SetupHTTP(node *Node) http.Handler {
 	return mux
 }
 
-func forwardFile(node *Node, storedName, fileName string) {
+func forwardFileWithRetry(node *Node, storedName, fileName string) {
+	const maxRetries = 5
+	backoff := 500 * time.Millisecond
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := forwardFile(node, storedName, fileName)
+		if err == nil {
+			log.Printf("[files] forwarded %s to hub (attempt %d)", storedName, attempt)
+			// Notify hub via WS as well (in case the HTTP forward was a race)
+			node.SendToHub(WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
+				FileID:   storedName,
+				FileName: fileName,
+				SenderID: node.store.config.DeviceID,
+			}})
+			return
+		}
+		log.Printf("[files] forward %s failed (attempt %d/%d): %v", storedName, attempt, maxRetries, err)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	log.Printf("[files] giving up forwarding %s after %d attempts", storedName, maxRetries)
+}
+
+func forwardFile(node *Node, storedName, fileName string) error {
 	f, err := os.Open(node.store.FilePath(storedName))
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("file", fileName)
 	if err != nil {
-		return
+		return err
 	}
-	io.Copy(part, f)
+	if _, err := io.Copy(part, f); err != nil {
+		return err
+	}
 	writer.Close()
-	req, _ := http.NewRequest("POST", fmt.Sprintf("http://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("hub returned %d", resp.StatusCode)
+	}
+	return nil
 }

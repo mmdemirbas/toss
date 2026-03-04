@@ -44,6 +44,7 @@ type AuthPayload struct {
 	Token      string `json:"token"`
 	DeviceID   string `json:"deviceId"`
 	DeviceName string `json:"deviceName"`
+	Port       int    `json:"port,omitempty"`
 }
 
 type PaneUpdatePayload struct {
@@ -53,6 +54,12 @@ type PaneUpdatePayload struct {
 
 type PaneDeletePayload struct {
 	PaneID   string `json:"paneId"`
+	SenderID string `json:"senderId"`
+}
+
+type FileNotifyPayload struct {
+	FileID   string `json:"fileId"`
+	FileName string `json:"fileName"`
 	SenderID string `json:"senderId"`
 }
 

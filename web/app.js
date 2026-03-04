@@ -72,7 +72,6 @@ function generateAutoName(content) {
 
 // ---- Language detection ----
 const langPatterns = [
-  { lang: 'markdown',   test: s => /^#{1,6}\s|^\*\*|^\- \[|^\|.*\|$|!\[.*\]\(|^\>\s/m.test(s) },
   { lang: 'json',       test: s => { try { if (/^\s*[\[{]/.test(s)) { JSON.parse(s); return true; } } catch(e) {} return false; } },
   { lang: 'yaml',       test: s => /^[\w-]+:\s/m.test(s) && !/<\w/.test(s) && /\n[\w-]+:\s/m.test(s) },
   { lang: 'html',       test: s => /^\s*<!DOCTYPE|^\s*<html|<\/?(div|span|p|h[1-6]|body|head|script|style|link)\b/im.test(s) },
@@ -81,7 +80,7 @@ const langPatterns = [
   { lang: 'sql',        test: s => /\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER|DROP|FROM|WHERE|JOIN)\b/i.test(s) },
   { lang: 'dockerfile', test: s => /^FROM\s+\S+/m.test(s) && /^(RUN|CMD|COPY|EXPOSE|WORKDIR|ENV|ENTRYPOINT)\s/m.test(s) },
   { lang: 'makefile',   test: s => /^[\w\-.]+:\s*/m.test(s) && /\t/.test(s) },
-  { lang: 'bash',       test: s => /^#!\s*\/bin\/(ba)?sh/m.test(s) || (/\b(echo|export|if\s+\[|then|fi|done|for\s+\w+\s+in)\b/.test(s) && /[\$\|]/.test(s)) },
+  { lang: 'bash',       test: s => /^#!\s*\/bin\/(ba|z)?sh/m.test(s) || /^#!\s*\/usr\/bin\/env\s+(ba|z)?sh/m.test(s) || (/\b(echo|export|if\s+\[|then|fi|done|for\s+\w+\s+in|apt-get|yum|brew|curl|wget|chmod|mkdir|sudo|cd|source|\.\/)\b/.test(s) && /[\$\|]|&&/.test(s)) || (/^#\s+\S/m.test(s) && /\b(echo|export|apt-get|yum|brew|curl|wget|chmod|mkdir|sudo|source)\b/.test(s)) },
   { lang: 'go',         test: s => /^package\s+\w+/m.test(s) || (/\bfunc\s+[\w(]/.test(s) && /\b(import|fmt|error)\b/.test(s)) },
   { lang: 'rust',       test: s => /\bfn\s+\w+/.test(s) && /\b(let\s+mut|impl|pub\s+fn|use\s+\w|::)\b/.test(s) },
   { lang: 'python',     test: s => /\b(def\s+\w+|import\s+\w+|from\s+\w+\s+import|if\s+__name__)\b/.test(s) && /:$/.test(s.split('\n').find(l => /\b(def|class|if|for|while)\b/.test(l)) || '') },
@@ -93,6 +92,24 @@ const langPatterns = [
   { lang: 'php',        test: s => /<\?php|\$\w+\s*=/.test(s) },
   { lang: 'ruby',       test: s => /\b(def\s+\w+|end$|require\s+'|puts\s)/m.test(s) },
   { lang: 'toml',       test: s => /^\[[\w.]+\]\s*$/m.test(s) && /^\w+\s*=\s*/m.test(s) },
+  // Markdown last among ambiguous formats: # comments in code should not trigger markdown
+  { lang: 'markdown',   test: s => {
+    // Reject if content has shell/script indicators
+    if (/^#!\s*\//m.test(s)) return false;
+    if (/[\$\|]|&&/.test(s) && /\b(echo|export|cd|sudo|apt|brew|curl|wget|chmod|mkdir)\b/.test(s)) return false;
+    // Require genuine markdown constructs
+    const hasHeading = /^#{1,6}\s+\S/m.test(s);
+    const hasBold = /\*\*\S.*\S\*\*/.test(s);
+    const hasLink = /\[.+\]\(.+\)/.test(s);
+    const hasCheckbox = /^\- \[[ x]\]/m.test(s);
+    const hasTable = /^\|.+\|$/m.test(s);
+    const hasBlockquote = /^>\s+\S/m.test(s);
+    const hasCodeBlock = /^```/m.test(s);
+    const indicators = [hasHeading, hasBold, hasLink, hasCheckbox, hasTable, hasBlockquote, hasCodeBlock];
+    // Need at least 2 markdown indicators, or 1 strong one (link, table, checkbox, code block)
+    const count = indicators.filter(Boolean).length;
+    return count >= 2 || hasLink || hasCheckbox || hasTable || hasCodeBlock;
+  }},
 ];
 
 function detectLanguage(content) {

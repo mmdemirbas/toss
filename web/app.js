@@ -9,7 +9,6 @@ let state = {
   deviceId: '',
   needsToken: false,
   connected: false,
-  previewByPaneId: {},
   sidebarCollapsed: false,
   wrapEnabled: false,
   manualTitleByPaneId: {},
@@ -204,16 +203,21 @@ function applyAutoNameIfAllowed(paneId) {
 }
 
 function isPanePreviewing(paneId) {
-  if (Object.prototype.hasOwnProperty.call(state.previewByPaneId, paneId)) {
-    return !!state.previewByPaneId[paneId];
-  }
   const pane = state.panes.find((p) => p.id === paneId);
-  return pane ? pane.language === 'markdown' : false;
+  if (!pane) return false;
+  if (pane.preview !== undefined && pane.preview !== null) {
+    return !!pane.preview;
+  }
+  // Default: markdown gets preview
+  return pane.language === 'markdown';
 }
 
 function setPanePreviewing(paneId, previewing) {
   if (!paneId) return;
-  state.previewByPaneId[paneId] = !!previewing;
+  const pane = state.panes.find((p) => p.id === paneId);
+  if (pane) {
+    pane.preview = !!previewing;
+  }
 }
 
 function selectPane(paneId) {
@@ -257,7 +261,6 @@ async function createPane(opts = {}) {
     const created = await res.json();
     state.panes = [created, ...state.panes.filter((p) => p.id !== created.id)];
     state.selectedPaneId = created.id;
-    setPanePreviewing(created.id, created.language === 'markdown');
     render();
     focusEditor();
     return created;
@@ -279,7 +282,6 @@ async function updatePane(pane) {
 async function deletePane(id) {
   await fetch(API + '/api/panes/' + id, { method: 'DELETE' });
   state.panes = state.panes.filter(p => p.id !== id);
-  delete state.previewByPaneId[id];
   delete state.manualTitleByPaneId[id];
   delete state.pendingAutoNameByPaneId[id];
   if (state.selectedPaneId === id) {
@@ -323,16 +325,8 @@ function setupEventSource() {
       renderSidebar();
       renderStatusBar();
       renderOverlay();
-      // Sync editor if not focused
-      const editor = document.getElementById('editor');
-      if (editor && document.activeElement !== editor) {
-        const pane = getSelectedPane();
-        if (pane) {
-          editor.value = pane.content || '';
-          if (isPanePreviewing(pane.id)) renderPreview(pane);
-          else renderEditorHighlight(pane);
-        }
-      }
+      // Sync editor: language, preview state, content
+      renderEditor();
     } catch (err) {}
   };
   eventSource.onerror = () => {
@@ -797,9 +791,11 @@ async function savePaneOrder(panes) {
 function togglePreview() {
   const pane = getSelectedPane();
   if (!pane) return;
-  setPanePreviewing(pane.id, !isPanePreviewing(pane.id));
+  const newState = !isPanePreviewing(pane.id);
+  setPanePreviewing(pane.id, newState);
+  debouncedSave(pane);
   renderEditor();
-  if (!isPanePreviewing(pane.id)) focusEditor();
+  if (!newState) focusEditor();
 }
 
 function scheduleAutoDetect(pane) {

@@ -19,6 +19,7 @@ type Pane struct {
 	Type      string `json:"type"`
 	Content   string `json:"content"`
 	Language  string `json:"language,omitempty"`
+	Preview   *bool  `json:"preview,omitempty"`
 	Order     int64  `json:"order,omitempty"`
 	CreatedBy string `json:"createdBy"`
 	CreatedAt int64  `json:"createdAt"`

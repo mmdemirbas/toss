@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
-	"math/big"
 	"time"
 )
 
@@ -42,7 +41,6 @@ type WSMessage struct {
 
 // Specific payloads
 type AuthPayload struct {
-	Token      string `json:"token"`
 	DeviceID   string `json:"deviceId"`
 	DeviceName string `json:"deviceName"`
 	Port       int    `json:"port,omitempty"`
@@ -84,16 +82,6 @@ func generateID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return fmt.Sprintf("%x", b)
-}
-
-func generateToken() string {
-	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	result := make([]byte, 6)
-	for i := range result {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		result[i] = chars[n.Int64()]
-	}
-	return string(result)
 }
 
 func nowMs() int64 {

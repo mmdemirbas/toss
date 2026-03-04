@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -45,12 +44,8 @@ type Node struct {
 
 	roleMu  sync.RWMutex
 	role    string // "hub" or "spoke"
-	token   string
 	hubAddr string
 	hubID   string
-
-	authMu          sync.RWMutex
-	spokeNeedsToken bool
 
 	// Hub state
 	clients     map[string]*Client
@@ -93,26 +88,6 @@ func (n *Node) GetRole() string {
 	return n.role
 }
 
-func (n *Node) IsAuthRequired() bool {
-	return strings.ToLower(strings.TrimSpace(n.store.config.AuthMode)) == "required"
-}
-
-func normalizeToken(token string) string {
-	return strings.ToUpper(strings.TrimSpace(token))
-}
-
-func (n *Node) setSpokeNeedsToken(v bool) {
-	n.authMu.Lock()
-	n.spokeNeedsToken = v
-	n.authMu.Unlock()
-}
-
-func (n *Node) SpokeNeedsToken() bool {
-	n.authMu.RLock()
-	defer n.authMu.RUnlock()
-	return n.spokeNeedsToken
-}
-
 // Start performs discovery and starts in the appropriate role.
 func (n *Node) Start() {
 	log.Println("[node] discovering hub on LAN...")
@@ -131,15 +106,8 @@ func (n *Node) Start() {
 func (n *Node) becomeHub() {
 	n.roleMu.Lock()
 	n.role = "hub"
-	if n.store.config.Token == "" {
-		n.token = generateToken()
-		n.store.SetToken(n.token)
-	} else {
-		n.token = n.store.config.Token
-	}
 	n.hubStopCh = make(chan struct{})
 	n.roleMu.Unlock()
-	n.setSpokeNeedsToken(false)
 
 	self := Device{
 		ID:       n.store.config.DeviceID,
@@ -151,7 +119,7 @@ func (n *Node) becomeHub() {
 	n.devices[self.ID] = self
 	n.devicesMu.Unlock()
 
-	log.Printf("[node] running as HUB — code: %s", n.token)
+	log.Println("[node] running as HUB")
 
 	go RunDiscoveryListener(n.store.config.DeviceID, n.port, n.collisionCh, n.reverseCh, n.hubStopCh)
 	go AnnounceHub(n.store.config.DeviceID, n.port, n.hubStopCh)
@@ -166,7 +134,6 @@ func (n *Node) becomeSpoke(hubAddr, hubID string) {
 	n.hubID = hubID
 	n.spokeStop = make(chan struct{})
 	n.roleMu.Unlock()
-	n.setSpokeNeedsToken(n.IsAuthRequired() && normalizeToken(n.store.config.SavedToken) == "")
 
 	log.Printf("[node] running as SPOKE — hub at %s", hubAddr)
 	go n.runSpoke()
@@ -290,23 +257,9 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 	payloadData, _ := json.Marshal(msg.Payload)
 	var auth AuthPayload
 	json.Unmarshal(payloadData, &auth)
-	auth.Token = normalizeToken(auth.Token)
 	if auth.DeviceID == "" {
 		n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_payload"}})
 		return fmt.Errorf("missing device id")
-	}
-
-	if n.IsAuthRequired() {
-		if auth.Token == "" {
-			n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "token_required"}})
-			time.Sleep(100 * time.Millisecond)
-			return fmt.Errorf("token required")
-		}
-		if auth.Token != normalizeToken(n.token) {
-			n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "invalid_token"}})
-			time.Sleep(100 * time.Millisecond)
-			return fmt.Errorf("invalid token")
-		}
 	}
 
 	client.authed = true
@@ -590,8 +543,7 @@ func (n *Node) hasHubConn() bool {
 func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 	// Send auth BEFORE exposing conn to other goroutines to prevent concurrent writes
 	if sendAuth {
-		token := normalizeToken(n.store.config.SavedToken)
-		auth := WSMessage{Type: "auth", Payload: AuthPayload{Token: token, DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName, Port: n.port}}
+		auth := WSMessage{Type: "auth", Payload: AuthPayload{DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName, Port: n.port}}
 		data, _ := json.Marshal(auth)
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -668,26 +620,11 @@ func (n *Node) spokePinger(conn *websocket.Conn) {
 func (n *Node) handleSpokeMessage(msg WSMessage) {
 	switch msg.Type {
 	case "auth_ok":
-		log.Println("[spoke] authenticated")
-		n.setSpokeNeedsToken(false)
+		log.Println("[spoke] connected to hub")
 		n.notifySSE()
 
 	case "auth_fail":
-		reason := "invalid_token"
-		if msg.Payload != nil {
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload map[string]string
-			if err := json.Unmarshal(payloadData, &payload); err == nil {
-				if v := strings.TrimSpace(payload["reason"]); v != "" {
-					reason = v
-				}
-			}
-		}
-		if reason == "invalid_token" || reason == "token_required" {
-			n.store.SetSavedToken("")
-			n.setSpokeNeedsToken(true)
-		}
-		log.Printf("[spoke] auth failed (%s)", reason)
+		log.Println("[spoke] connection rejected by hub")
 		n.notifySSE()
 
 	case "sync":

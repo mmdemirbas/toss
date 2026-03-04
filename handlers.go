@@ -32,56 +32,15 @@ func SetupHTTP(node *Node) http.Handler {
 	// Status
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		role := node.GetRole()
 		status := map[string]interface{}{
-			"role":         role,
-			"deviceId":     node.store.config.DeviceID,
-			"deviceName":   node.store.config.DeviceName,
-			"token":        "",
-			"hubAddr":      node.hubAddr,
-			"devices":      node.getDevices(),
-			"panes":        node.store.GetPanes(),
-			"needsToken":   false,
-			"authMode":     node.store.config.AuthMode,
-			"authRequired": node.IsAuthRequired(),
-		}
-		if role == "hub" {
-			status["token"] = node.token
-		}
-		if role == "spoke" && node.IsAuthRequired() && (normalizeToken(node.store.config.SavedToken) == "" || node.SpokeNeedsToken()) {
-			status["needsToken"] = true
+			"role":       node.GetRole(),
+			"deviceId":   node.store.config.DeviceID,
+			"deviceName": node.store.config.DeviceName,
+			"hubAddr":    node.hubAddr,
+			"devices":    node.getDevices(),
+			"panes":      node.store.GetPanes(),
 		}
 		json.NewEncoder(w).Encode(status)
-	})
-
-	// Token
-	mux.HandleFunc("/api/token", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			http.Error(w, "method not allowed", 405)
-			return
-		}
-		var body struct {
-			Token string `json:"token"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON", 400)
-			return
-		}
-		body.Token = normalizeToken(body.Token)
-		if node.IsAuthRequired() && body.Token == "" {
-			http.Error(w, "token required", 400)
-			return
-		}
-		node.store.SetSavedToken(body.Token)
-		node.setSpokeNeedsToken(false)
-		// Force reconnect
-		node.hubConnMu.Lock()
-		if node.hubConn != nil {
-			node.hubConn.Close()
-		}
-		node.hubConnMu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
 	// Panes CRUD

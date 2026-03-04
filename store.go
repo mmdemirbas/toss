@@ -7,16 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 )
 
 type Config struct {
 	DeviceID   string `json:"deviceId"`
 	DeviceName string `json:"deviceName"`
-	Token      string `json:"token"`
-	SavedToken string `json:"savedToken"`
-	AuthMode   string `json:"authMode"`
 }
 
 type Store struct {
@@ -59,7 +55,6 @@ func (s *Store) loadConfig() {
 		s.config = Config{
 			DeviceID:   generateID(),
 			DeviceName: hostname,
-			AuthMode:   "optional",
 		}
 		s.saveConfig()
 		return
@@ -80,12 +75,6 @@ func (s *Store) normalizeConfig() {
 		}
 		s.config.DeviceName = hostname
 	}
-	mode := strings.ToLower(strings.TrimSpace(s.config.AuthMode))
-	if mode != "required" && mode != "optional" {
-		s.config.AuthMode = "optional"
-		return
-	}
-	s.config.AuthMode = mode
 }
 
 func (s *Store) saveConfig() {
@@ -182,25 +171,6 @@ func (s *Store) deleteReferencedFiles(content string) {
 			log.Printf("[files] deleted %s (pane removed)", fileID)
 		}
 	}
-}
-
-func (s *Store) SetToken(token string) {
-	s.config.Token = token
-	s.saveConfig()
-}
-
-func (s *Store) SetSavedToken(token string) {
-	s.config.SavedToken = token
-	s.saveConfig()
-}
-
-func (s *Store) SetAuthMode(mode string) {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode != "required" && mode != "optional" {
-		return
-	}
-	s.config.AuthMode = mode
-	s.saveConfig()
 }
 
 func (s *Store) FilePath(fileID string) string {

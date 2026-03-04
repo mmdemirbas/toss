@@ -9,10 +9,45 @@ Share text, code, images, and files between devices on your local network. Zero 
 ```bash
 git clone https://github.com/mmdemirbas/lanpane.git
 cd lanpane
-go run .
+make            # macOS / Linux
+make.cmd        # Windows
 ```
 
 Open `https://localhost:7753` in your browser (accept the self-signed certificate warning once). That's it.
+
+Only Go is required. All frontend assets are vendored in the repo — no npm, no internet needed at build time.
+
+## Commands
+
+Both `make` (macOS/Linux) and `make.cmd` (Windows) support the same subcommands:
+
+| Command | Description |
+|---|---|
+| `make` | Run the development server (default) |
+| `make build` | Build binary for current platform → `bin/` |
+| `make build-all` | Cross-compile for macOS, Windows, Linux → `bin/` |
+| `make test` | Run tests |
+| `make vendor` | Re-download vendored JS/CSS (only to update lib versions) |
+| `make clean` | Remove build artifacts |
+
+Or use plain Go directly:
+
+```bash
+go run ./cmd/lanpane                         # Run
+go build -o bin/lanpane ./cmd/lanpane        # Build
+go test ./cmd/lanpane                        # Test
+```
+
+## Project Structure
+
+```
+cmd/lanpane/        Go source (package main)
+  web/              Frontend (HTML/JS/CSS, embedded into binary)
+    vendor/         Vendored JS/CSS/fonts (checked into git)
+Makefile            Build commands (macOS / Linux)
+make.cmd            Build commands (Windows)
+bin/                Build output (gitignored)
+```
 
 ## How It Works
 
@@ -69,7 +104,7 @@ Hub-Spoke with auto-election:
 ## Options
 
 ```
-go run . -port 8080         # Use a different port (default: 7753)
+./bin/lanpane -port 8080    # Use a different port (default: 7753)
 ```
 
 All traffic uses HTTPS with an auto-generated self-signed certificate stored in `~/.lanpane/certs/`. On first access, your browser will show a certificate warning — accept it once to proceed.

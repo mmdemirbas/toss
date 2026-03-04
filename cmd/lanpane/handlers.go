@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-//go:embed web/*
+//go:embed all:web
 var webFS embed.FS
 
 func SetupHTTP(node *Node) http.Handler {

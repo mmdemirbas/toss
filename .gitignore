@@ -1,6 +1,5 @@
-.idea
-.DS_Store
-lanpane
-lanpane.exe
-*.test
 *.out
+*.test
+.DS_Store
+.idea
+bin/

@@ -1,5 +1,5 @@
 // LanPane Frontend
-const API = '';
+const API = ''; // empty = same origin (requests go to the serving host)
 let state = {
   panes: [],
   devices: [],
@@ -400,7 +400,7 @@ function renderSidebar() {
 
   const tokenArea = document.getElementById('hub-token-area');
   tokenArea.innerHTML = (state.role === 'hub' && state.token)
-    ? `<div class="hub-token"><span class="hub-token-label">Code</span><span class="hub-token-value">${state.token}</span></div>`
+    ? `<div class="hub-token"><span class="hub-token-label">Code</span><span class="hub-token-value">${esc(state.token)}</span></div>`
     : '';
 
   const devList = document.getElementById('device-list');
@@ -479,7 +479,8 @@ function renderPreview(pane) {
 
   if (lang === 'markdown') {
     try {
-      preview.innerHTML = marked.parse(content);
+      const rawHTML = marked.parse(content);
+      preview.innerHTML = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(rawHTML) : rawHTML;
       preview.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
       enhanceMarkdownCodeBlocks(preview);
     } catch (e) {
@@ -751,7 +752,7 @@ function setupListeners() {
       e.preventDefault();
       toggleSidebar();
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+    if (e.altKey && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       toggleWrap();
     }

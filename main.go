@@ -152,11 +152,17 @@ func sendSSEState(w http.ResponseWriter, flusher http.Flusher, node *Node) {
 		needsToken = true
 	}
 
+	role := node.GetRole()
+	tokenForUI := ""
+	if role == "hub" {
+		tokenForUI = node.token
+	}
+
 	data := map[string]interface{}{
 		"panes":        node.store.GetPanes(),
 		"devices":      node.getDevices(),
-		"role":         node.GetRole(),
-		"token":        node.token,
+		"role":         role,
+		"token":        tokenForUI,
 		"needsToken":   needsToken,
 		"authMode":     node.store.config.AuthMode,
 		"authRequired": node.IsAuthRequired(),

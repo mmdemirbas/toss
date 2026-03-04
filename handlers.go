@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -61,7 +62,10 @@ func SetupHTTP(node *Node) http.Handler {
 		var body struct {
 			Token string `json:"token"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON", 400)
+			return
+		}
 		body.Token = normalizeToken(body.Token)
 		if node.IsAuthRequired() && body.Token == "" {
 			http.Error(w, "token required", 400)
@@ -87,7 +91,10 @@ func SetupHTTP(node *Node) http.Handler {
 			json.NewEncoder(w).Encode(node.store.GetPanes())
 		case "POST":
 			var pane Pane
-			json.NewDecoder(r.Body).Decode(&pane)
+			if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
+				http.Error(w, "invalid JSON", 400)
+				return
+			}
 			if pane.ID == "" {
 				pane.ID = generateID()
 			}
@@ -129,7 +136,10 @@ func SetupHTTP(node *Node) http.Handler {
 		switch r.Method {
 		case "PUT":
 			var pane Pane
-			json.NewDecoder(r.Body).Decode(&pane)
+			if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
+				http.Error(w, "invalid JSON", 400)
+				return
+			}
 			pane.ID = id
 			if pane.Order == 0 {
 				if existing := node.store.GetPane(id); existing != nil {
@@ -186,7 +196,7 @@ func SetupHTTP(node *Node) http.Handler {
 
 		var storedName string
 		if forceID := r.URL.Query().Get("forceid"); forceID != "" {
-			storedName = forceID
+			storedName = filepath.Base(forceID)
 		} else {
 			storedName = generateID() + ext
 		}
@@ -197,7 +207,11 @@ func SetupHTTP(node *Node) http.Handler {
 			return
 		}
 		defer dst.Close()
-		written, _ := io.Copy(dst, file)
+		written, err := io.Copy(dst, file)
+		if err != nil {
+			http.Error(w, "write error", 500)
+			return
+		}
 
 		// Spoke → forward to hub
 		if node.GetRole() == "spoke" && node.hubAddr != "" {
@@ -217,8 +231,8 @@ func SetupHTTP(node *Node) http.Handler {
 	// File download
 	mux.HandleFunc("/api/files/", func(w http.ResponseWriter, r *http.Request) {
 		fileID := strings.TrimPrefix(r.URL.Path, "/api/files/")
-		if fileID == "" {
-			http.Error(w, "missing file id", 400)
+		if fileID == "" || fileID != filepath.Base(fileID) {
+			http.Error(w, "invalid file id", 400)
 			return
 		}
 		path := node.store.FilePath(fileID)
@@ -228,11 +242,17 @@ func SetupHTTP(node *Node) http.Handler {
 				resp, err := http.Get(fmt.Sprintf("http://%s/api/files/%s", node.hubAddr, fileID))
 				if err == nil && resp.StatusCode == 200 {
 					defer resp.Body.Close()
-					dst, _ := os.Create(path)
-					io.Copy(dst, resp.Body)
-					dst.Close()
-					http.ServeFile(w, r, path)
-					return
+					dst, err := os.Create(path)
+					if err == nil {
+						if _, err := io.Copy(dst, resp.Body); err != nil {
+							dst.Close()
+							os.Remove(path)
+						} else {
+							dst.Close()
+							http.ServeFile(w, r, path)
+							return
+						}
+					}
 				}
 			}
 			http.Error(w, "file not found", 404)

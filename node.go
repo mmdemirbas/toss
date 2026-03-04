@@ -463,9 +463,6 @@ func (n *Node) runSpoke() {
 		} else {
 			// No hub found — maybe I should become hub
 			log.Println("[spoke] no hub found, promoting to hub")
-			n.roleMu.Lock()
-			n.role = "hub"
-			n.roleMu.Unlock()
 			n.becomeHub()
 			n.notifySSE()
 			return
@@ -643,8 +640,8 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 // SendToHub sends a message to the hub (spoke mode).
 func (n *Node) SendToHub(msg WSMessage) error {
 	n.hubConnMu.Lock()
+	defer n.hubConnMu.Unlock()
 	conn := n.hubConn
-	n.hubConnMu.Unlock()
 	if conn == nil {
 		return fmt.Errorf("not connected to hub")
 	}

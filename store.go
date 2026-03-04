@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,9 @@ func NewStore() (*Store, error) {
 	}
 	dir := filepath.Join(home, ".lanpane")
 	filesDir := filepath.Join(dir, "files")
-	os.MkdirAll(filesDir, 0755)
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
 
 	s := &Store{
 		dir:      dir,
@@ -85,7 +88,7 @@ func (s *Store) normalizeConfig() {
 
 func (s *Store) saveConfig() {
 	data, _ := json.MarshalIndent(s.config, "", "  ")
-	os.WriteFile(filepath.Join(s.dir, "config.json"), data, 0644)
+	os.WriteFile(filepath.Join(s.dir, "config.json"), data, 0600)
 }
 
 func (s *Store) loadPanes() {
@@ -172,7 +175,7 @@ func (s *Store) SetAuthMode(mode string) {
 }
 
 func (s *Store) FilePath(fileID string) string {
-	return filepath.Join(s.filesDir, fileID)
+	return filepath.Join(s.filesDir, filepath.Base(fileID))
 }
 
 func (s *Store) ReplacePanes(panes []Pane) {

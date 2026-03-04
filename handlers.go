@@ -260,7 +260,7 @@ func SetupHTTP(node *Node) http.Handler {
 				addrs = node.getSpokeAddrs()
 			}
 			for _, addr := range addrs {
-				resp, err := http.Get(fmt.Sprintf("http://%s/api/files/%s?norecurse=1", addr, fileID))
+				resp, err := insecureHTTPClient.Get(fmt.Sprintf("https://%s/api/files/%s?norecurse=1", addr, fileID))
 				if err != nil || resp.StatusCode != 200 {
 					if resp != nil {
 						resp.Body.Close()
@@ -329,12 +329,12 @@ func forwardFile(node *Node, storedName, fileName string) error {
 		return err
 	}
 	writer.Close()
-	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := insecureHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

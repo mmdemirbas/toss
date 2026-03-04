@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,16 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// Shared TLS config that skips verification (self-signed certs between LAN peers)
+var insecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
+
+var insecureHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: insecureTLSConfig,
+	},
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -221,9 +232,9 @@ func (n *Node) tryReverseDial(msg DiscoveryMsg) {
 		return
 	}
 	addr := fmt.Sprintf("%s:%d", msg.IP, msg.Port)
-	url := "ws://" + addr + "/ws"
+	url := "wss://" + addr + "/ws"
 	log.Printf("[hub] attempting reverse dial to %s (%s)", addr, msg.DeviceID)
-	dialer := websocket.Dialer{HandshakeTimeout: 4 * time.Second}
+	dialer := websocket.Dialer{HandshakeTimeout: 4 * time.Second, TLSClientConfig: insecureTLSConfig}
 	conn, _, err := dialer.Dial(url, nil)
 	if err != nil {
 		return
@@ -556,11 +567,12 @@ func (n *Node) connectToHub() error {
 	hubAddr := n.hubAddr
 	n.roleMu.RUnlock()
 
-	url := "ws://" + hubAddr + "/ws"
+	url := "wss://" + hubAddr + "/ws"
 	log.Printf("[spoke] connecting to %s", url)
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
+		TLSClientConfig:  insecureTLSConfig,
 	}
 	conn, _, err := dialer.Dial(url, nil)
 	if err != nil {
@@ -738,9 +750,8 @@ func (n *Node) fetchFileFromAddr(fileID, addr string) {
 	if _, err := os.Stat(path); err == nil {
 		return // already have it
 	}
-	url := fmt.Sprintf("http://%s/api/files/%s", addr, fileID)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
+	url := fmt.Sprintf("https://%s/api/files/%s", addr, fileID)
+	resp, err := insecureHTTPClient.Get(url)
 	if err != nil || resp.StatusCode != 200 {
 		if resp != nil {
 			resp.Body.Close()

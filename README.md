@@ -12,7 +12,7 @@ cd lanpane
 go run .
 ```
 
-Open `http://localhost:7753` in your browser. That's it.
+Open `https://localhost:7753` in your browser. That's it.
 
 ## How It Works
 
@@ -37,7 +37,7 @@ Open `http://localhost:7753` in your browser. That's it.
 - **Auto-discovery** — devices find each other via UDP broadcast, no IP address needed
 - **Configurable auth** — run with optional auth for frictionless LAN use, or require a token
 - **Dual-direction connect** — handles one-way firewall rules via reverse hub → spoke dialing
-- **HTTPS** — optional built-in TLS listener with auto-generated self-signed certificate
+- **HTTPS everywhere** — all traffic (UI, API, inter-node) uses TLS with auto-generated self-signed certificates
 - **Offline persistence** — panes persist locally, survive restarts
 
 ## Architecture
@@ -72,13 +72,11 @@ Hub-Spoke with auto-election:
 go run . -port 8080         # Use a different port (default: 7753)
 go run . -auth optional     # No access code needed (default)
 go run . -auth required     # Require access code on spokes
-go run . -https=false       # Disable HTTPS listener
-go run . -https-port 8443   # Custom HTTPS port (default: port+1)
 ```
 
 Default auth mode is `optional` (stored in `~/.lanpane/config.json` as `authMode`).
 
-By default, HTTPS is enabled on `port+1` using a generated self-signed certificate in `~/.lanpane/certs/`.
+All traffic uses HTTPS with an auto-generated self-signed certificate stored in `~/.lanpane/certs/`. On first access, your browser will show a certificate warning — accept it once to proceed.
 
 ## Data Storage
 

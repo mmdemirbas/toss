@@ -41,6 +41,30 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 		return err
 	}
 
+	// Collect all local IPs for SANs so inter-node TLS works
+	ips := []net.IP{
+		net.ParseIP("127.0.0.1"),
+		net.ParseIP("::1"),
+	}
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+				ips = append(ips, ipnet.IP)
+			}
+		}
+	}
+
+	hostname, _ := os.Hostname()
+	dnsNames := []string{"localhost"}
+	if hostname != "" {
+		dnsNames = append(dnsNames, hostname)
+	}
+
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
@@ -52,11 +76,8 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		DNSNames:              []string{"localhost"},
-		IPAddresses: []net.IP{
-			net.ParseIP("127.0.0.1"),
-			net.ParseIP("::1"),
-		},
+		DNSNames:              dnsNames,
+		IPAddresses:           ips,
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)

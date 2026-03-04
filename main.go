@@ -16,10 +16,8 @@ import (
 )
 
 func main() {
-	port := flag.Int("port", 7753, "HTTP/WebSocket port")
+	port := flag.Int("port", 7753, "HTTPS port")
 	authMode := flag.String("auth", "", "Auth mode: optional or required (defaults to value in config, first run is optional)")
-	httpsEnabled := flag.Bool("https", true, "Enable HTTPS UI/API listener")
-	httpsPort := flag.Int("https-port", 0, "HTTPS port (default: -port + 1)")
 	flag.Parse()
 
 	log.SetFlags(log.Ltime | log.Lshortfile)
@@ -38,15 +36,12 @@ func main() {
 	handler := SetupHTTP(node)
 	setupSSE(node, handler.(*http.ServeMux))
 
-	url := fmt.Sprintf("http://localhost:%d", *port)
-	secureURL := ""
-	resolvedHTTPSPort := *httpsPort
-	if resolvedHTTPSPort == 0 {
-		resolvedHTTPSPort = *port + 1
+	certFile, keyFile, err := ensureHTTPSCertFiles(store.dir)
+	if err != nil {
+		log.Fatalf("[tls] failed to setup certificates: %v", err)
 	}
-	if *httpsEnabled {
-		secureURL = fmt.Sprintf("https://localhost:%d", resolvedHTTPSPort)
-	}
+
+	url := fmt.Sprintf("https://localhost:%d", *port)
 	fmt.Println()
 	fmt.Println("  ╭─────────────────────────────────────────╮")
 	fmt.Println("  │              L A N P A N E              │")
@@ -61,42 +56,21 @@ func main() {
 	}
 	fmt.Printf("  │  Auth:  %-10s                        │\n", strings.ToUpper(store.config.AuthMode))
 	fmt.Printf("  │  Open:  %-33s│\n", url)
-	if secureURL != "" {
-		fmt.Printf("  │  HTTPS: %-33s│\n", secureURL)
-	}
 	fmt.Printf("  │  OS:    %-10s                        │\n", runtime.GOOS)
 	fmt.Println("  ╰─────────────────────────────────────────╯")
 	fmt.Println()
 
-	httpSrv := &http.Server{Addr: fmt.Sprintf(":%d", *port), Handler: handler}
-	var httpsSrv *http.Server
-	var certFile, keyFile string
-	if *httpsEnabled {
-		var err error
-		certFile, keyFile, err = ensureHTTPSCertFiles(store.dir)
-		if err != nil {
-			log.Printf("[https] disabled: %v", err)
-		} else {
-			httpsSrv = &http.Server{Addr: fmt.Sprintf(":%d", resolvedHTTPSPort), Handler: handler}
-		}
-	}
+	srv := &http.Server{Addr: fmt.Sprintf(":%d", *port), Handler: handler}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 1)
 	go func() {
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
-	if httpsSrv != nil {
-		go func() {
-			if err := httpsSrv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
-				errCh <- err
-			}
-		}()
-		log.Printf("[https] listening on :%d", resolvedHTTPSPort)
-	}
+	log.Printf("[server] listening on https://:%d", *port)
 
 	select {
 	case sig := <-sigCh:
@@ -107,10 +81,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_ = httpSrv.Shutdown(ctx)
-	if httpsSrv != nil {
-		_ = httpsSrv.Shutdown(ctx)
-	}
+	_ = srv.Shutdown(ctx)
 }
 
 func setupSSE(node *Node, mux *http.ServeMux) {

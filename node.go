@@ -373,7 +373,7 @@ func (n *Node) hubReadLoop(client *Client) {
 			var payload PaneDeletePayload
 			json.Unmarshal(payloadData, &payload)
 			payload.SenderID = client.device.ID
-			n.store.DeletePane(payload.PaneID)
+			n.store.DeletePaneWithFiles(payload.PaneID)
 			n.broadcast(WSMessage{Type: "pane_delete", Payload: payload}, client.device.ID)
 			n.notifySSE()
 
@@ -655,7 +655,7 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		payloadData, _ := json.Marshal(msg.Payload)
 		var payload PaneDeletePayload
 		json.Unmarshal(payloadData, &payload)
-		n.store.DeletePane(payload.PaneID)
+		n.store.DeletePaneWithFiles(payload.PaneID)
 		n.notifySSE()
 
 	case "devices":

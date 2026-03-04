@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -153,6 +155,33 @@ func (s *Store) DeletePane(id string) {
 	delete(s.panes, id)
 	s.mu.Unlock()
 	s.savePanes()
+}
+
+// DeletePaneWithFiles deletes a pane and removes any files referenced in its content.
+func (s *Store) DeletePaneWithFiles(id string) {
+	pane := s.GetPane(id)
+	s.DeletePane(id)
+	if pane != nil {
+		s.deleteReferencedFiles(pane.Content)
+	}
+}
+
+var fileRefRe = regexp.MustCompile(`/api/files/([^\s)"'\]]+)`)
+
+func (s *Store) deleteReferencedFiles(content string) {
+	matches := fileRefRe.FindAllStringSubmatch(content, -1)
+	for _, m := range matches {
+		fileID := filepath.Base(m[1])
+		if fileID == "" || fileID == "." || fileID == ".." {
+			continue
+		}
+		path := s.FilePath(fileID)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("[files] failed to delete %s: %v", fileID, err)
+		} else if err == nil {
+			log.Printf("[files] deleted %s (pane removed)", fileID)
+		}
+	}
 }
 
 func (s *Store) SetToken(token string) {

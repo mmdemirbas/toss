@@ -162,7 +162,7 @@ func SetupHTTP(node *Node) http.Handler {
 			node.notifySSE()
 			json.NewEncoder(w).Encode(pane)
 		case "DELETE":
-			node.store.DeletePane(id)
+			node.store.DeletePaneWithFiles(id)
 			del := WSMessage{Type: "pane_delete", Payload: PaneDeletePayload{PaneID: id, SenderID: node.store.config.DeviceID}}
 			if node.GetRole() == "hub" {
 				node.broadcast(del, "")

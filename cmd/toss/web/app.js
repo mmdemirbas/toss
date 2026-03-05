@@ -23,6 +23,121 @@ let draggedPaneId = null;
 let paneMeta = {};
 let creatingPane = false;
 
+// ---- Language list and recent tracking ----
+// Icons are short text codes (max 2 chars) so they align in monospace font.
+const LANGUAGES = [
+  { value: 'plaintext',  icon: '··', label: 'plaintext' },
+  { value: 'markdown',   icon: 'Md', label: 'markdown' },
+  { value: 'bash',       icon: '$_', label: 'bash' },
+  { value: 'c',          icon: 'C',  label: 'c' },
+  { value: 'cpp',        icon: 'C+', label: 'c++' },
+  { value: 'csharp',     icon: 'C#', label: 'c#' },
+  { value: 'css',        icon: '<>', label: 'css' },
+  { value: 'dart',       icon: 'Da', label: 'dart' },
+  { value: 'dockerfile', icon: 'Dk', label: 'dockerfile' },
+  { value: 'go',         icon: 'Go', label: 'go' },
+  { value: 'html',       icon: '<>', label: 'html' },
+  { value: 'java',       icon: 'Jv', label: 'java' },
+  { value: 'javascript', icon: 'JS', label: 'javascript' },
+  { value: 'json',       icon: '{}', label: 'json' },
+  { value: 'kotlin',     icon: 'Kt', label: 'kotlin' },
+  { value: 'makefile',   icon: 'Mk', label: 'makefile' },
+  { value: 'php',        icon: 'Ph', label: 'php' },
+  { value: 'powershell', icon: 'PS', label: 'powershell' },
+  { value: 'python',     icon: 'Py', label: 'python' },
+  { value: 'ruby',       icon: 'Rb', label: 'ruby' },
+  { value: 'rust',       icon: 'Rs', label: 'rust' },
+  { value: 'sql',        icon: 'Sq', label: 'sql' },
+  { value: 'swift',      icon: 'Sw', label: 'swift' },
+  { value: 'toml',       icon: 'Tm', label: 'toml' },
+  { value: 'typescript', icon: 'TS', label: 'typescript' },
+  { value: 'xml',        icon: '<>', label: 'xml' },
+  { value: 'yaml',       icon: 'Ym', label: 'yaml' },
+];
+
+const LANG_MAP = Object.fromEntries(LANGUAGES.map(l => [l.value, l]));
+const DEFAULT_RECENT_LANGS = ['plaintext', 'markdown', 'bash', 'sql', 'json'];
+const MAX_RECENT_LANGS = 7;
+
+function getRecentLangs() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('toss.recentLangs'));
+    if (Array.isArray(stored) && stored.length > 0) return stored.filter(v => LANG_MAP[v]);
+  } catch(e) {}
+  return [...DEFAULT_RECENT_LANGS];
+}
+
+function saveRecentLangs(langs) {
+  try { localStorage.setItem('toss.recentLangs', JSON.stringify(langs)); } catch(e) {}
+}
+
+function touchRecentLang(lang) {
+  if (!LANG_MAP[lang]) return;
+  let recent = getRecentLangs();
+  recent = [lang, ...recent.filter(l => l !== lang)].slice(0, MAX_RECENT_LANGS);
+  saveRecentLangs(recent);
+}
+
+function populateLangSelect(currentLang) {
+  const trigger = document.getElementById('lang-trigger');
+  const menu = document.getElementById('lang-menu');
+  if (!trigger || !menu) return;
+
+  const cur = LANG_MAP[currentLang] || LANG_MAP['plaintext'];
+
+  // Update trigger button
+  trigger.innerHTML =
+    `<span class="lang-icon">${esc(cur.icon)}</span>` +
+    `<span>${esc(cur.label)}</span>` +
+    `<span class="lang-arrow">▾</span>`;
+  trigger.dataset.value = cur.value;
+
+  let recent = getRecentLangs();
+  if (currentLang && LANG_MAP[currentLang] && !recent.includes(currentLang)) {
+    recent = [currentLang, ...recent].slice(0, MAX_RECENT_LANGS + 1);
+  }
+
+  const recentSet = new Set(recent);
+  const remaining = LANGUAGES.filter(l => !recentSet.has(l.value));
+
+  let html = '';
+  for (const val of recent) {
+    const l = LANG_MAP[val];
+    if (!l) continue;
+    const sel = l.value === currentLang ? ' selected' : '';
+    html += `<div class="lang-item${sel}" data-value="${l.value}">` +
+      `<span class="lang-icon">${esc(l.icon)}</span>` +
+      `<span class="lang-label">${esc(l.label)}</span></div>`;
+  }
+
+  if (remaining.length > 0) {
+    html += '<div class="lang-sep"></div>';
+    html += '<div class="lang-group">More</div>';
+    for (const l of remaining) {
+      const sel = l.value === currentLang ? ' selected' : '';
+      html += `<div class="lang-item${sel}" data-value="${l.value}">` +
+        `<span class="lang-icon">${esc(l.icon)}</span>` +
+        `<span class="lang-label">${esc(l.label)}</span></div>`;
+    }
+  }
+
+  menu.innerHTML = html;
+}
+
+function toggleLangDropdown() {
+  const dd = document.getElementById('lang-dropdown');
+  const opening = !dd.classList.contains('open');
+  dd.classList.toggle('open', opening);
+  if (opening) {
+    const sel = dd.querySelector('.lang-item.selected');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function closeLangDropdown() {
+  document.getElementById('lang-dropdown')?.classList.remove('open');
+}
+
 function scheduleAutoName(pane) {
   // Only auto-name if pane doesn't have an explicit name
   if ((pane.name || '').trim()) return;
@@ -78,6 +193,7 @@ const langPatterns = [
   { lang: 'sql',        test: s => /\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER|DROP|FROM|WHERE|JOIN)\b/i.test(s) },
   { lang: 'dockerfile', test: s => /^FROM\s+\S+/m.test(s) && /^(RUN|CMD|COPY|EXPOSE|WORKDIR|ENV|ENTRYPOINT)\s/m.test(s) },
   { lang: 'makefile',   test: s => /^[\w\-.]+:\s*/m.test(s) && /\t/.test(s) },
+  { lang: 'powershell', test: s => /\b(Get-|Set-|New-|Remove-|Invoke-|Write-Host|Write-Output|Select-Object|Where-Object|ForEach-Object)\b/.test(s) || /\[CmdletBinding\s*\(/.test(s) || (/\$\w+\s*=/.test(s) && /\b(param\s*\(|\[Parameter)/.test(s)) },
   { lang: 'bash',       test: s => /^#!\s*\/bin\/(ba|z)?sh/m.test(s) || /^#!\s*\/usr\/bin\/env\s+(ba|z)?sh/m.test(s) || (/\b(echo|export|if\s+\[|then|fi|done|for\s+\w+\s+in|apt-get|yum|brew|curl|wget|chmod|mkdir|sudo|cd|source|\.\/)\b/.test(s) && /[\$\|]|&&/.test(s)) || (/^#\s+\S/m.test(s) && /\b(echo|export|apt-get|yum|brew|curl|wget|chmod|mkdir|sudo|source)\b/.test(s)) },
   { lang: 'go',         test: s => /^package\s+\w+/m.test(s) || (/\bfunc\s+[\w(]/.test(s) && /\b(import|fmt|error)\b/.test(s)) },
   { lang: 'rust',       test: s => /\bfn\s+\w+/.test(s) && /\b(let\s+mut|impl|pub\s+fn|use\s+\w|::)\b/.test(s) },
@@ -430,8 +546,7 @@ function renderEditor() {
   if (document.activeElement !== nameInput) nameInput.value = pane.name || '';
 
   // Language dropdown
-  const langSel = document.getElementById('lang-select');
-  langSel.value = pane.language || 'plaintext';
+  populateLangSelect(pane.language || 'plaintext');
 
   // Preview toggle
   const previewBtn = document.getElementById('preview-btn');
@@ -683,15 +798,34 @@ function setupListeners() {
     }
   });
 
-  // Language selector
-  document.getElementById('lang-select').addEventListener('change', (e) => {
+  // Language dropdown
+  document.getElementById('lang-trigger').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleLangDropdown();
+  });
+
+  document.getElementById('lang-menu').addEventListener('click', (e) => {
+    const item = e.target.closest('.lang-item');
+    if (!item) return;
+    const value = item.dataset.value;
     const pane = getSelectedPane();
-    if (pane) {
-      pane.language = e.target.value;
+    if (pane && value) {
+      pane.language = value;
+      touchRecentLang(value);
+      closeLangDropdown();
+      populateLangSelect(value);
       debouncedSave(pane);
       if (isPanePreviewing(pane.id)) renderPreview(pane);
       else renderEditorHighlight(pane);
     }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#lang-dropdown')) closeLangDropdown();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeLangDropdown();
   });
 
   // Preview toggle
@@ -822,7 +956,8 @@ function scheduleAutoDetect(pane) {
     const detected = detectLanguage(pane.content);
     if (detected && detected !== pane.language) {
       pane.language = detected;
-      document.getElementById('lang-select').value = detected;
+      touchRecentLang(detected);
+      populateLangSelect(detected);
       debouncedSave(pane);
       if (!isPanePreviewing(pane.id)) renderEditorHighlight(pane);
     }
@@ -948,21 +1083,8 @@ function focusEditor() {
 }
 
 function langIcon(lang) {
-  switch (lang) {
-    case 'markdown': return '◈';
-    case 'javascript': case 'typescript': return 'JS';
-    case 'python': return 'Py';
-    case 'go': return 'Go';
-    case 'rust': return 'Rs';
-    case 'java': case 'kotlin': return 'Jv';
-    case 'html': case 'css': return '◇';
-    case 'json': case 'yaml': case 'toml': return '{}';
-    case 'sql': return 'Sq';
-    case 'bash': return '$_';
-    case 'swift': return 'Sw';
-    case 'c': case 'cpp': return 'C';
-    default: return '··';
-  }
+  const entry = LANG_MAP[lang];
+  return entry ? entry.icon : '··';
 }
 
 function esc(str) {

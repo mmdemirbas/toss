@@ -1,0 +1,3 @@
+- Allow better tab management and organization. Maybe we can approach it like a file tree. Each node can have content and children. We can freely group the content into a nested structure by dragging them.
+- We also need to sync metadata for each node.
+- Show the metadata  (creation time, update time, created by, updated by, etc.) without being too distractive or making UI crowded.

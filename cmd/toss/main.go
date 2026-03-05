@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -53,7 +55,11 @@ func main() {
 	fmt.Println("  ╰─────────────────────────────────────────╯")
 	fmt.Println()
 
-	srv := &http.Server{Addr: fmt.Sprintf(":%d", *port), Handler: handler}
+	srv := &http.Server{
+		Addr:     fmt.Sprintf(":%d", *port),
+		Handler:  handler,
+		ErrorLog: log.New(tlsErrorFilter{}, "", log.Ltime|log.Lshortfile),
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -119,4 +125,16 @@ func sendSSEState(w http.ResponseWriter, flusher http.Flusher, node *Node) {
 	jsonData, _ := json.Marshal(data)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
 	flusher.Flush()
+}
+
+// tlsErrorFilter suppresses expected TLS handshake errors logged by the HTTP
+// server (e.g. browsers rejecting self-signed certs). These are not actionable
+// and can be misleading, especially when the real issue is a peer being offline.
+type tlsErrorFilter struct{}
+
+func (tlsErrorFilter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "TLS handshake error") {
+		return io.Discard.Write(p)
+	}
+	return os.Stderr.Write(p)
 }

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -291,6 +292,11 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 	n.sendToClient(client, WSMessage{Type: "sync", Payload: syncData})
 	n.broadcastDevices()
 	n.notifySSE()
+
+	// Fetch any files the hub is missing that the new spoke might have
+	if client.httpAddr != "" {
+		go n.fetchMissingPaneFiles([]string{client.httpAddr})
+	}
 
 	// Set up hub-side keepalive: detect dead spoke connections
 	conn.SetPongHandler(func(string) error {
@@ -640,6 +646,8 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		n.devicesMu.Unlock()
 		log.Printf("[spoke] synced %d panes", len(s.Panes))
 		n.notifySSE()
+		// Fetch any files referenced in panes that we don't have locally
+		go n.fetchMissingPaneFiles([]string{n.hubAddr})
 
 	case "pane_update":
 		payloadData, _ := json.Marshal(msg.Payload)
@@ -687,12 +695,13 @@ func (n *Node) fetchFileFromAddr(fileID, addr string) {
 	if _, err := os.Stat(path); err == nil {
 		return // already have it
 	}
-	url := fmt.Sprintf("https://%s/api/files/%s", addr, fileID)
+	url := fmt.Sprintf("https://%s/api/files/%s?norecurse=1", addr, fileID)
 	resp, err := insecureHTTPClient.Get(url)
 	if err != nil || resp.StatusCode != 200 {
 		if resp != nil {
 			resp.Body.Close()
 		}
+		log.Printf("[files] fetch %s from %s failed: %v", fileID, addr, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -707,6 +716,43 @@ func (n *Node) fetchFileFromAddr(fileID, addr string) {
 	}
 	dst.Close()
 	log.Printf("[files] fetched %s from %s", fileID, addr)
+}
+
+// fetchMissingPaneFiles scans all panes for file references and fetches any missing files.
+func (n *Node) fetchMissingPaneFiles(addrs []string) {
+	if len(addrs) == 0 {
+		return
+	}
+	panes := n.store.GetPanes()
+	var missing []string
+	seen := make(map[string]bool)
+	for _, p := range panes {
+		matches := fileRefRe.FindAllStringSubmatch(p.Content, -1)
+		for _, m := range matches {
+			fileID := filepath.Base(m[1])
+			if fileID == "" || fileID == "." || fileID == ".." || seen[fileID] {
+				continue
+			}
+			seen[fileID] = true
+			path := n.store.FilePath(fileID)
+			if _, err := os.Stat(path); err == nil {
+				continue // already have it
+			}
+			missing = append(missing, fileID)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	log.Printf("[files] found %d missing file(s) referenced in panes, fetching...", len(missing))
+	for _, fileID := range missing {
+		for _, addr := range addrs {
+			n.fetchFileFromAddr(fileID, addr)
+			if _, err := os.Stat(n.store.FilePath(fileID)); err == nil {
+				break // got it
+			}
+		}
+	}
 }
 
 // SendToHub sends a message to the hub (spoke mode).

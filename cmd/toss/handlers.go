@@ -39,6 +39,7 @@ func SetupHTTP(node *Node) http.Handler {
 			"hubAddr":    node.hubAddr,
 			"devices":    node.getDevices(),
 			"panes":      node.store.GetPanes(),
+			"clipboard":  node.store.GetClipboardConfig(),
 		}
 		json.NewEncoder(w).Encode(status)
 	})
@@ -246,6 +247,27 @@ func SetupHTTP(node *Node) http.Handler {
 			return
 		}
 		http.ServeFile(w, r, path)
+	})
+
+	// Clipboard config
+	mux.HandleFunc("/api/clipboard/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case "GET":
+			json.NewEncoder(w).Encode(node.store.GetClipboardConfig())
+		case "PUT":
+			var cfg ClipboardConfig
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				http.Error(w, "invalid JSON", 400)
+				return
+			}
+			node.store.SetClipboardConfig(cfg)
+			go node.clipboard.Restart()
+			node.notifySSE()
+			json.NewEncoder(w).Encode(cfg)
+		default:
+			http.Error(w, "method not allowed", 405)
+		}
 	})
 
 	return mux

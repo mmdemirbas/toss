@@ -72,6 +72,16 @@ type DemotePayload struct {
 	HubPort     int    `json:"hubPort"`
 }
 
+type ClipboardPayload struct {
+	Content  string `json:"content"`
+	SenderID string `json:"senderId"`
+}
+
+type ClipboardConfig struct {
+	AutoTab     bool `json:"autoTab"`
+	SyncEnabled bool `json:"syncEnabled"`
+}
+
 func generateID() string {
 	b := make([]byte, 8)
 	rand.Read(b)

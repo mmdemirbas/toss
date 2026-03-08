@@ -118,9 +118,10 @@ func setupSSE(node *Node, mux *http.ServeMux) {
 
 func sendSSEState(w http.ResponseWriter, flusher http.Flusher, node *Node) {
 	data := map[string]interface{}{
-		"panes":   node.store.GetPanes(),
-		"devices": node.getDevices(),
-		"role":    node.GetRole(),
+		"panes":     node.store.GetPanes(),
+		"devices":   node.getDevices(),
+		"role":      node.GetRole(),
+		"clipboard": node.store.GetClipboardConfig(),
 	}
 	jsonData, _ := json.Marshal(data)
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)

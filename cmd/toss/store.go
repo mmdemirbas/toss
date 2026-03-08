@@ -11,8 +11,9 @@ import (
 )
 
 type Config struct {
-	DeviceID   string `json:"deviceId"`
-	DeviceName string `json:"deviceName"`
+	DeviceID   string          `json:"deviceId"`
+	DeviceName string          `json:"deviceName"`
+	Clipboard  ClipboardConfig `json:"clipboard"`
 }
 
 type Store struct {
@@ -185,4 +186,17 @@ func (s *Store) ReplacePanes(panes []Pane) {
 	}
 	s.mu.Unlock()
 	s.savePanes()
+}
+
+func (s *Store) GetClipboardConfig() ClipboardConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.config.Clipboard
+}
+
+func (s *Store) SetClipboardConfig(cfg ClipboardConfig) {
+	s.mu.Lock()
+	s.config.Clipboard = cfg
+	s.mu.Unlock()
+	s.saveConfig()
 }

@@ -67,10 +67,13 @@ type Node struct {
 	// SSE subscribers for push to browser
 	sseMu   sync.Mutex
 	sseSubs map[chan struct{}]struct{}
+
+	// Clipboard monitor
+	clipboard *ClipboardMonitor
 }
 
 func NewNode(store *Store, port int) *Node {
-	return &Node{
+	n := &Node{
 		store:       store,
 		port:        port,
 		clients:     make(map[string]*Client),
@@ -81,6 +84,8 @@ func NewNode(store *Store, port int) *Node {
 		spokeStop:   make(chan struct{}),
 		sseSubs:     make(map[chan struct{}]struct{}),
 	}
+	n.clipboard = NewClipboardMonitor(n)
+	return n
 }
 
 func (n *Node) GetRole() string {
@@ -101,6 +106,12 @@ func (n *Node) Start() {
 		n.becomeSpoke(hubAddr, hubID)
 	} else {
 		n.becomeHub()
+	}
+
+	// Start clipboard monitor if any clipboard feature is enabled
+	cfg := n.store.GetClipboardConfig()
+	if cfg.AutoTab || cfg.SyncEnabled {
+		n.clipboard.Start()
 	}
 }
 
@@ -367,6 +378,19 @@ func (n *Node) hubReadLoop(client *Client) {
 			}
 			// Relay to other spokes so they can pre-fetch on demand
 			n.broadcast(WSMessage{Type: "file_notify", Payload: payload}, client.device.ID)
+
+		case "clipboard_update":
+			payloadData, _ := json.Marshal(msg.Payload)
+			var payload ClipboardPayload
+			json.Unmarshal(payloadData, &payload)
+			payload.SenderID = client.device.ID
+			// Relay to other spokes
+			n.broadcast(WSMessage{Type: "clipboard_update", Payload: payload}, client.device.ID)
+			// Write to hub's clipboard if sync enabled
+			cfg := n.store.GetClipboardConfig()
+			if cfg.SyncEnabled && n.clipboard != nil {
+				n.clipboard.WriteClipboard(payload.Content)
+			}
 		}
 	}
 }
@@ -683,6 +707,16 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		if payload.FileID != "" {
 			go n.fetchFileFromAddr(payload.FileID, n.hubAddr)
 		}
+
+	case "clipboard_update":
+		payloadData, _ := json.Marshal(msg.Payload)
+		var payload ClipboardPayload
+		json.Unmarshal(payloadData, &payload)
+		// Write to local clipboard if sync enabled
+		cfg := n.store.GetClipboardConfig()
+		if cfg.SyncEnabled && n.clipboard != nil {
+			n.clipboard.WriteClipboard(payload.Content)
+		}
 	}
 }
 
@@ -753,6 +787,45 @@ func (n *Node) fetchMissingPaneFiles(addrs []string) {
 			}
 		}
 	}
+}
+
+// createClipboardPane creates a new pane from clipboard content.
+func (n *Node) createClipboardPane(content string) {
+	pane := Pane{
+		ID:        generateID(),
+		Name:      clipboardPaneName(content),
+		Type:      "code",
+		Content:   content,
+		Language:  "plaintext",
+		Order:     nowMs(),
+		CreatedBy: n.store.config.DeviceID,
+		CreatedAt: nowMs(),
+		UpdatedAt: nowMs(),
+		Version:   nowMs(),
+	}
+	n.store.UpsertPane(pane)
+	update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: n.store.config.DeviceID}}
+	if n.GetRole() == "hub" {
+		n.broadcast(update, "")
+	} else {
+		n.SendToHub(update)
+	}
+	n.notifySSE()
+	log.Printf("[clipboard] created pane: %s", pane.Name)
+}
+
+// broadcastClipboard sends clipboard content to peers.
+func (n *Node) broadcastClipboard(content string) {
+	msg := WSMessage{Type: "clipboard_update", Payload: ClipboardPayload{
+		Content:  content,
+		SenderID: n.store.config.DeviceID,
+	}}
+	if n.GetRole() == "hub" {
+		n.broadcast(msg, "")
+	} else {
+		n.SendToHub(msg)
+	}
+	log.Printf("[clipboard] sent clipboard update (%d bytes)", len(content))
 }
 
 // SendToHub sends a message to the hub (spoke mode).

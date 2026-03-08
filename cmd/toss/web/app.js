@@ -11,6 +11,7 @@ let state = {
   wrapEnabled: false,
   manualTitleByPaneId: {},
   pendingAutoNameByPaneId: {},
+  clipboardConfig: { autoTab: false, syncEnabled: false },
 };
 
 let autoNameTimer = null;
@@ -366,6 +367,7 @@ async function fetchStatus() {
     state.panes = sortPanes(data.panes || []);
     state.devices = data.devices || [];
     state.connected = true;
+    state.clipboardConfig = data.clipboard || state.clipboardConfig;
   } catch (e) {
     state.connected = false;
   }
@@ -440,6 +442,7 @@ function setupEventSource() {
       state.role = data.role || state.role;
       state.connected = true;
       state.selectedPaneId = selId;
+      state.clipboardConfig = data.clipboard || state.clipboardConfig;
 
       // Auto-select panes added by other devices
       const newRemotePane = state.panes.find(p => !oldIds.has(p.id) && p.createdBy !== state.deviceId);
@@ -449,6 +452,7 @@ function setupEventSource() {
 
       renderSidebar();
       renderStatusBar();
+      renderClipboardToggles();
       // Sync editor: language, preview state, content
       renderEditor();
     } catch (err) {}
@@ -465,6 +469,27 @@ function render() {
   renderSidebar();
   renderEditor();
   renderStatusBar();
+  renderClipboardToggles();
+}
+
+function renderClipboardToggles() {
+  const autoTab = document.getElementById('clipboard-autotab');
+  const sync = document.getElementById('clipboard-sync');
+  if (autoTab) autoTab.checked = state.clipboardConfig.autoTab;
+  if (sync) sync.checked = state.clipboardConfig.syncEnabled;
+}
+
+async function updateClipboardConfig(config) {
+  try {
+    await fetch(API + '/api/clipboard/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    state.clipboardConfig = config;
+  } catch (e) {
+    showToast('Clipboard settings update failed', true);
+  }
 }
 
 function renderSidebar() {
@@ -685,6 +710,14 @@ function syncEditorScroll() {
 function setupListeners() {
   document.getElementById('sidebar-toggle-btn').addEventListener('click', toggleSidebar);
   document.getElementById('wrap-btn').addEventListener('click', toggleWrap);
+
+  // Clipboard toggles
+  document.getElementById('clipboard-autotab').addEventListener('change', (e) => {
+    updateClipboardConfig({ ...state.clipboardConfig, autoTab: e.target.checked });
+  });
+  document.getElementById('clipboard-sync').addEventListener('change', (e) => {
+    updateClipboardConfig({ ...state.clipboardConfig, syncEnabled: e.target.checked });
+  });
 
   document.getElementById('pane-list').addEventListener('click', (e) => {
     const addRow = e.target.closest('.pane-item-add');

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +13,8 @@ import (
 
 const (
 	clipboardPollInterval = 500 * time.Millisecond
-	clipboardMaxSize      = 1 << 20 // 1 MB
+	clipboardMaxTextSize  = 1 << 20  // 1 MB
+	clipboardMaxImageSize = 10 << 20 // 10 MB
 )
 
 // ClipboardMonitor polls the system clipboard for changes and
@@ -20,11 +22,14 @@ const (
 type ClipboardMonitor struct {
 	node *Node
 
-	mu          sync.Mutex
-	lastContent string
-	lastWritten string // content we wrote – used to suppress echo
-	running     bool
-	stopCh      chan struct{}
+	mu                   sync.Mutex
+	lastText             string
+	lastWrittenText      string
+	lastImageHash        string
+	lastWrittenImageHash string
+	imgCheckCounter      int
+	running              bool
+	stopCh               chan struct{}
 }
 
 func NewClipboardMonitor(node *Node) *ClipboardMonitor {
@@ -43,7 +48,11 @@ func (cm *ClipboardMonitor) Start() {
 
 	// Seed with current clipboard content so we don't fire immediately.
 	if content, err := clipboard.ReadAll(); err == nil {
-		cm.lastContent = content
+		cm.lastText = content
+	}
+	// Seed image hash (may be slow, but runs once).
+	if hash, _, _, err := readClipboardImage(); err == nil && hash != "" {
+		cm.lastImageHash = hash
 	}
 	cm.mu.Unlock()
 
@@ -86,52 +95,123 @@ func (cm *ClipboardMonitor) pollLoop() {
 	}
 }
 
+// check is called on every tick and handles both text and image clipboard.
 func (cm *ClipboardMonitor) check() {
-	content, err := clipboard.ReadAll()
-	if err != nil {
+	text, _ := clipboard.ReadAll()
+
+	cm.mu.Lock()
+	textChanged := text != "" && text != cm.lastText && text != cm.lastWrittenText
+	// Detect text→image transition: text goes from non-empty to empty.
+	textCleared := text == "" && cm.lastText != ""
+	cm.imgCheckCounter++
+	periodicImageCheck := cm.imgCheckCounter%3 == 0 // every ~1.5 s
+	cm.mu.Unlock()
+
+	// ── Text changed ─────────────────────────────────────────────────
+	if textChanged {
+		cm.mu.Lock()
+		cm.lastText = text
+		cm.lastImageHash = "" // clipboard is now text
+		cm.mu.Unlock()
+
+		if len(text) > clipboardMaxTextSize {
+			log.Printf("[clipboard] text too large (%d bytes), skipping", len(text))
+			return
+		}
+
+		cfg := cm.node.store.GetClipboardConfig()
+		if cfg.AutoTab {
+			cm.node.createClipboardPane(text)
+		}
+		if cfg.SyncEnabled {
+			cm.node.broadcastClipboard(text)
+		}
+		return
+	}
+
+	// ── Image check (on text-cleared or periodic) ────────────────────
+	if textCleared || periodicImageCheck {
+		cm.handleImageCheck(text)
+	}
+}
+
+func (cm *ClipboardMonitor) handleImageCheck(currentText string) {
+	imgHash, imgData, ext, err := readClipboardImage()
+	if err != nil || imgHash == "" || len(imgData) == 0 {
+		// No image – just track the text value.
+		if currentText == "" {
+			cm.mu.Lock()
+			cm.lastText = ""
+			cm.mu.Unlock()
+		}
 		return
 	}
 
 	cm.mu.Lock()
-	if content == cm.lastContent || content == "" {
+	if imgHash == cm.lastImageHash || imgHash == cm.lastWrittenImageHash {
+		cm.lastText = currentText
 		cm.mu.Unlock()
 		return
 	}
-	// Avoid echoing content we just wrote on behalf of a peer.
-	if content == cm.lastWritten {
-		cm.lastContent = content
-		cm.mu.Unlock()
-		return
-	}
-	cm.lastContent = content
+	cm.lastImageHash = imgHash
+	cm.lastText = currentText
 	cm.mu.Unlock()
 
-	if len(content) > clipboardMaxSize {
-		log.Printf("[clipboard] content too large (%d bytes), skipping", len(content))
+	if len(imgData) > clipboardMaxImageSize {
+		log.Printf("[clipboard] image too large (%d bytes), skipping", len(imgData))
+		return
+	}
+
+	fileName := "clipboard-" + time.Now().Format("150405") + ext
+	fileID, err := cm.node.storeImageData(imgData, ext)
+	if err != nil {
+		log.Printf("[clipboard] store image failed: %v", err)
 		return
 	}
 
 	cfg := cm.node.store.GetClipboardConfig()
-
 	if cfg.AutoTab {
-		cm.node.createClipboardPane(content)
+		cm.node.createClipboardImagePane(fileID, fileName)
 	}
 	if cfg.SyncEnabled {
-		cm.node.broadcastClipboard(content)
+		cm.node.broadcastClipboardImage(fileID, fileName)
 	}
+	log.Printf("[clipboard] detected image (%d bytes, %s)", len(imgData), ext)
 }
 
-// WriteClipboard writes content received from a peer without triggering an echo.
+// WriteClipboard writes text received from a peer without triggering an echo.
 func (cm *ClipboardMonitor) WriteClipboard(content string) {
 	cm.mu.Lock()
-	cm.lastWritten = content
-	cm.lastContent = content
+	cm.lastWrittenText = content
+	cm.lastText = content
 	cm.mu.Unlock()
 
 	if err := clipboard.WriteAll(content); err != nil {
 		log.Printf("[clipboard] write error: %v", err)
 	} else {
 		log.Printf("[clipboard] wrote %d bytes from peer", len(content))
+	}
+}
+
+// WriteClipboardImage writes an image file to the clipboard without triggering an echo.
+func (cm *ClipboardMonitor) WriteClipboardImage(filePath string) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Printf("[clipboard] read image for clipboard failed: %v", err)
+		return
+	}
+	hash := hashBytes(data)
+
+	cm.mu.Lock()
+	cm.lastWrittenImageHash = hash
+	cm.lastImageHash = hash
+	cm.lastText = "" // image on clipboard now
+	cm.mu.Unlock()
+
+	if err := writeClipboardImage(filePath); err != nil {
+		log.Printf("[clipboard] write image error: %v", err)
+	} else {
+		log.Printf("[clipboard] wrote image to clipboard from peer (%d bytes)", len(data))
 	}
 }
 

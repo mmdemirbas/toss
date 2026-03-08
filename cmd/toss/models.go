@@ -73,7 +73,9 @@ type DemotePayload struct {
 }
 
 type ClipboardPayload struct {
-	Content  string `json:"content"`
+	Content  string `json:"content,omitempty"`
+	FileID   string `json:"fileId,omitempty"`
+	FileName string `json:"fileName,omitempty"`
 	SenderID string `json:"senderId"`
 }
 

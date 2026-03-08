@@ -73,10 +73,10 @@ type DemotePayload struct {
 }
 
 type ClipboardPayload struct {
-	Content  string `json:"content,omitempty"`
-	FileID   string `json:"fileId,omitempty"`
-	FileName string `json:"fileName,omitempty"`
-	SenderID string `json:"senderId"`
+	Content   string `json:"content,omitempty"`   // text clipboard
+	ImageData string `json:"imageData,omitempty"` // base64-encoded image
+	ImageExt  string `json:"imageExt,omitempty"`  // e.g. ".png"
+	SenderID  string `json:"senderId"`
 }
 
 type ClipboardConfig struct {

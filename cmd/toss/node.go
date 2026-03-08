@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -389,15 +390,10 @@ func (n *Node) hubReadLoop(client *Client) {
 			// Write to hub's clipboard if sync enabled
 			cfg := n.store.GetClipboardConfig()
 			if cfg.SyncEnabled && n.clipboard != nil {
-				if payload.FileID != "" {
-					// Image clipboard – fetch file, then write to clipboard
-					go func() {
-						n.fetchFileFromAddr(payload.FileID, client.httpAddr)
-						path := n.store.FilePath(payload.FileID)
-						if _, err := os.Stat(path); err == nil {
-							n.clipboard.WriteClipboardImage(path)
-						}
-					}()
+				if payload.ImageData != "" {
+					if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
+						n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
+					}
 				} else if payload.Content != "" {
 					n.clipboard.WriteClipboard(payload.Content)
 				}
@@ -726,15 +722,10 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		// Write to local clipboard if sync enabled
 		cfg := n.store.GetClipboardConfig()
 		if cfg.SyncEnabled && n.clipboard != nil {
-			if payload.FileID != "" {
-				// Image clipboard – fetch file, then write to clipboard
-				go func() {
-					n.fetchFileFromAddr(payload.FileID, n.hubAddr)
-					path := n.store.FilePath(payload.FileID)
-					if _, err := os.Stat(path); err == nil {
-						n.clipboard.WriteClipboardImage(path)
-					}
-				}()
+			if payload.ImageData != "" {
+				if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
+					n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
+				}
 			} else if payload.Content != "" {
 				n.clipboard.WriteClipboard(payload.Content)
 			}
@@ -812,6 +803,7 @@ func (n *Node) fetchMissingPaneFiles(addrs []string) {
 }
 
 // createClipboardPane creates a new pane from clipboard text content.
+// The pane is synced to all peers via pane_update (one tab everywhere).
 func (n *Node) createClipboardPane(content string) {
 	pane := Pane{
 		ID:        generateID(),
@@ -836,48 +828,28 @@ func (n *Node) createClipboardPane(content string) {
 	log.Printf("[clipboard] created pane: %s", pane.Name)
 }
 
-// broadcastClipboard sends text clipboard content to peers.
-func (n *Node) broadcastClipboard(content string) {
-	msg := WSMessage{Type: "clipboard_update", Payload: ClipboardPayload{
-		Content:  content,
-		SenderID: n.store.config.DeviceID,
-	}}
-	if n.GetRole() == "hub" {
-		n.broadcast(msg, "")
-	} else {
-		n.SendToHub(msg)
-	}
-	log.Printf("[clipboard] sent clipboard update (%d bytes)", len(content))
-}
-
-// storeImageData saves raw image bytes to the files directory and handles
-// hub/spoke file forwarding.  Returns the generated fileID.
-func (n *Node) storeImageData(data []byte, ext string) (string, error) {
+// createClipboardImagePane stores image bytes as a file, creates a markdown
+// pane referencing it, and syncs both to peers (one tab everywhere).
+func (n *Node) createClipboardImagePane(imgData []byte, ext, fileName string) {
+	// Store the image file locally and forward to peers.
 	fileID := generateID() + ext
 	path := n.store.FilePath(fileID)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return "", err
+	if err := os.WriteFile(path, imgData, 0644); err != nil {
+		log.Printf("[clipboard] store image failed: %v", err)
+		return
 	}
-	log.Printf("[clipboard] stored image %s (%d bytes)", fileID, len(data))
+	log.Printf("[clipboard] stored image %s (%d bytes)", fileID, len(imgData))
 
-	// Spoke → forward to hub
 	if n.GetRole() == "spoke" && n.hubAddr != "" {
-		go forwardFileWithRetry(n, fileID, "clipboard"+ext)
+		go forwardFileWithRetry(n, fileID, fileName)
 	}
-	// Hub → notify spokes about the new file
 	if n.GetRole() == "hub" {
-		notify := WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
-			FileID:   fileID,
-			FileName: "clipboard" + ext,
-			SenderID: n.store.config.DeviceID,
-		}}
-		n.broadcast(notify, "")
+		n.broadcast(WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
+			FileID: fileID, FileName: fileName, SenderID: n.store.config.DeviceID,
+		}}, "")
 	}
-	return fileID, nil
-}
 
-// createClipboardImagePane creates a markdown pane with an embedded image.
-func (n *Node) createClipboardImagePane(fileID, fileName string) {
+	// Create a markdown pane with the image embedded.
 	imgURL := "/api/files/" + fileID
 	content := fmt.Sprintf("![📋 %s](%s)\n", fileName, imgURL)
 	preview := true
@@ -905,19 +877,23 @@ func (n *Node) createClipboardImagePane(fileID, fileName string) {
 	log.Printf("[clipboard] created image pane: %s", pane.Name)
 }
 
-// broadcastClipboardImage sends an image clipboard reference to peers.
-func (n *Node) broadcastClipboardImage(fileID, fileName string) {
-	msg := WSMessage{Type: "clipboard_update", Payload: ClipboardPayload{
-		FileID:   fileID,
-		FileName: fileName,
-		SenderID: n.store.config.DeviceID,
-	}}
+// broadcastClipboardContent sends a self-contained clipboard_update to peers.
+// For text the Content field carries the text; for images the ImageData field
+// carries base64-encoded bytes so receivers can write to clipboard directly
+// without fetching any files.
+func (n *Node) broadcastClipboardContent(payload ClipboardPayload) {
+	payload.SenderID = n.store.config.DeviceID
+	msg := WSMessage{Type: "clipboard_update", Payload: payload}
 	if n.GetRole() == "hub" {
 		n.broadcast(msg, "")
 	} else {
 		n.SendToHub(msg)
 	}
-	log.Printf("[clipboard] sent clipboard image update: %s", fileID)
+	if payload.ImageData != "" {
+		log.Printf("[clipboard] sent clipboard image update (%d bytes encoded)", len(payload.ImageData))
+	} else {
+		log.Printf("[clipboard] sent clipboard update (%d bytes)", len(payload.Content))
+	}
 }
 
 // SendToHub sends a message to the hub (spoke mode).

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -124,7 +126,7 @@ func (cm *ClipboardMonitor) check() {
 			cm.node.createClipboardPane(text)
 		}
 		if cfg.SyncEnabled {
-			cm.node.broadcastClipboard(text)
+			cm.node.broadcastClipboardContent(ClipboardPayload{Content: text})
 		}
 		return
 	}
@@ -162,21 +164,22 @@ func (cm *ClipboardMonitor) handleImageCheck(currentText string) {
 		return
 	}
 
-	fileName := "clipboard-" + time.Now().Format("150405") + ext
-	fileID, err := cm.node.storeImageData(imgData, ext)
-	if err != nil {
-		log.Printf("[clipboard] store image failed: %v", err)
-		return
-	}
+	log.Printf("[clipboard] detected image (%d bytes, %s)", len(imgData), ext)
 
 	cfg := cm.node.store.GetClipboardConfig()
+
+	// autoTab: store image file and create a markdown pane (synced via pane_update)
 	if cfg.AutoTab {
-		cm.node.createClipboardImagePane(fileID, fileName)
+		fileName := "clipboard-" + time.Now().Format("150405") + ext
+		cm.node.createClipboardImagePane(imgData, ext, fileName)
 	}
+	// sync: send actual image content to peers (self-contained, no file fetch needed)
 	if cfg.SyncEnabled {
-		cm.node.broadcastClipboardImage(fileID, fileName)
+		cm.node.broadcastClipboardContent(ClipboardPayload{
+			ImageData: base64.StdEncoding.EncodeToString(imgData),
+			ImageExt:  ext,
+		})
 	}
-	log.Printf("[clipboard] detected image (%d bytes, %s)", len(imgData), ext)
 }
 
 // WriteClipboard writes text received from a peer without triggering an echo.
@@ -193,14 +196,10 @@ func (cm *ClipboardMonitor) WriteClipboard(content string) {
 	}
 }
 
-// WriteClipboardImage writes an image file to the clipboard without triggering an echo.
-func (cm *ClipboardMonitor) WriteClipboardImage(filePath string) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		log.Printf("[clipboard] read image for clipboard failed: %v", err)
-		return
-	}
-	hash := hashBytes(data)
+// WriteClipboardImageData writes raw image bytes to the system clipboard
+// without triggering an echo.
+func (cm *ClipboardMonitor) WriteClipboardImageData(imgData []byte, ext string) {
+	hash := hashBytes(imgData)
 
 	cm.mu.Lock()
 	cm.lastWrittenImageHash = hash
@@ -208,10 +207,18 @@ func (cm *ClipboardMonitor) WriteClipboardImage(filePath string) {
 	cm.lastText = "" // image on clipboard now
 	cm.mu.Unlock()
 
-	if err := writeClipboardImage(filePath); err != nil {
+	// Write to temp file, then to clipboard (OS tools require files).
+	tmpFile := filepath.Join(os.TempDir(), "toss_sync_"+generateID()+ext)
+	if err := os.WriteFile(tmpFile, imgData, 0644); err != nil {
+		log.Printf("[clipboard] write temp image failed: %v", err)
+		return
+	}
+	defer os.Remove(tmpFile)
+
+	if err := writeClipboardImage(tmpFile); err != nil {
 		log.Printf("[clipboard] write image error: %v", err)
 	} else {
-		log.Printf("[clipboard] wrote image to clipboard from peer (%d bytes)", len(data))
+		log.Printf("[clipboard] wrote image to clipboard from peer (%d bytes)", len(imgData))
 	}
 }
 

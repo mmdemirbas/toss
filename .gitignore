@@ -1,5 +1,12 @@
-*.out
-*.test
+# Binaries
+/bin/
+
+# OS
 .DS_Store
-.idea
-bin/
+
+# IntelliJ
+.idea/
+
+# Syncthing
+.stignore
+.stfolder

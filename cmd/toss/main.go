@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -31,14 +30,12 @@ func main() {
 	node.Start()
 
 	handler := SetupHTTP(node)
-	setupSSE(node, handler.(*http.ServeMux))
 
 	certFile, keyFile, err := ensureHTTPSCertFiles(store.dir)
 	if err != nil {
 		log.Fatalf("[tls] failed to setup certificates: %v", err)
 	}
 
-	url := fmt.Sprintf("https://localhost:%d", *port)
 	fmt.Println()
 	fmt.Println("  ╭─────────────────────────────────────────╮")
 	fmt.Println("  │                 T O S S                 │")
@@ -50,7 +47,6 @@ func main() {
 		fmt.Printf("  │  Role:  SPOKE                           │\n")
 		fmt.Printf("  │  Hub:   %-33s│\n", node.hubAddr)
 	}
-	fmt.Printf("  │  Open:  %-33s│\n", url)
 	fmt.Printf("  │  OS:    %-10s                        │\n", runtime.GOOS)
 	fmt.Println("  ╰─────────────────────────────────────────╯")
 	fmt.Println()
@@ -81,51 +77,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-}
-
-func setupSSE(node *Node, mux *http.ServeMux) {
-	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", 500)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		ch := node.subscribeSSE()
-		defer node.unsubscribeSSE(ch)
-
-		// Send initial state immediately
-		sendSSEState(w, flusher, node)
-
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-ch:
-				sendSSEState(w, flusher, node)
-			case <-time.After(15 * time.Second):
-				// Heartbeat to detect dead connections
-				fmt.Fprintf(w, ": heartbeat\n\n")
-				flusher.Flush()
-			}
-		}
-	})
-}
-
-func sendSSEState(w http.ResponseWriter, flusher http.Flusher, node *Node) {
-	data := map[string]interface{}{
-		"panes":     node.store.GetPanes(),
-		"devices":   node.getDevices(),
-		"role":      node.GetRole(),
-		"clipboard": node.store.GetClipboardConfig(),
-	}
-	jsonData, _ := json.Marshal(data)
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
-	flusher.Flush()
 }
 
 // tlsErrorFilter suppresses expected TLS handshake errors logged by the HTTP

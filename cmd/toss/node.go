@@ -66,10 +66,6 @@ type Node struct {
 	devices   map[string]Device
 	devicesMu sync.RWMutex
 
-	// SSE subscribers for push to browser
-	sseMu   sync.Mutex
-	sseSubs map[chan struct{}]struct{}
-
 	// Clipboard monitor
 	clipboard *ClipboardMonitor
 }
@@ -84,7 +80,6 @@ func NewNode(store *Store, port int) *Node {
 		reverseCh:   make(chan DiscoveryMsg, 8),
 		hubStopCh:   make(chan struct{}),
 		spokeStop:   make(chan struct{}),
-		sseSubs:     make(map[chan struct{}]struct{}),
 	}
 	n.clipboard = NewClipboardMonitor(n)
 	return n
@@ -110,11 +105,7 @@ func (n *Node) Start() {
 		n.becomeHub()
 	}
 
-	// Start clipboard monitor if any clipboard feature is enabled
-	cfg := n.store.GetClipboardConfig()
-	if cfg.AutoTab || cfg.SyncEnabled {
-		n.clipboard.Start()
-	}
+	n.clipboard.Start()
 }
 
 func (n *Node) becomeHub() {
@@ -188,7 +179,6 @@ func (n *Node) demoteToSpoke(hubAddr string) {
 	n.clientsMu.Unlock()
 
 	n.becomeSpoke(hubAddr, "")
-	n.notifySSE()
 }
 
 func (n *Node) handleReverseOffers() {
@@ -301,15 +291,9 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 	log.Printf("[hub] device %s (%s) connected", auth.DeviceName, shortID)
 
 	n.sendToClient(client, WSMessage{Type: "auth_ok"})
-	syncData := SyncPayload{Panes: n.store.GetPanes(), Devices: n.getDevices()}
+	syncData := SyncPayload{Devices: n.getDevices()}
 	n.sendToClient(client, WSMessage{Type: "sync", Payload: syncData})
 	n.broadcastDevices()
-	n.notifySSE()
-
-	// Fetch any files the hub is missing that the new spoke might have
-	if client.httpAddr != "" {
-		go n.fetchMissingPaneFiles([]string{client.httpAddr})
-	}
 
 	// Set up hub-side keepalive: detect dead spoke connections
 	conn.SetPongHandler(func(string) error {
@@ -337,7 +321,6 @@ func (n *Node) hubReadLoop(client *Client) {
 		close(client.sendCh)
 		log.Printf("[hub] device %s disconnected", client.device.Name)
 		n.broadcastDevices()
-		n.notifySSE()
 	}()
 
 	for {
@@ -351,24 +334,6 @@ func (n *Node) hubReadLoop(client *Client) {
 		}
 
 		switch msg.Type {
-		case "pane_update":
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload PaneUpdatePayload
-			json.Unmarshal(payloadData, &payload)
-			payload.SenderID = client.device.ID
-			n.store.UpsertPane(payload.Pane)
-			n.broadcast(WSMessage{Type: "pane_update", Payload: payload}, client.device.ID)
-			n.notifySSE()
-
-		case "pane_delete":
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload PaneDeletePayload
-			json.Unmarshal(payloadData, &payload)
-			payload.SenderID = client.device.ID
-			n.store.DeletePaneWithFiles(payload.PaneID)
-			n.broadcast(WSMessage{Type: "pane_delete", Payload: payload}, client.device.ID)
-			n.notifySSE()
-
 		case "file_notify":
 			payloadData, _ := json.Marshal(msg.Payload)
 			var payload FileNotifyPayload
@@ -388,9 +353,8 @@ func (n *Node) hubReadLoop(client *Client) {
 			payload.SenderID = client.device.ID
 			// Relay to other spokes
 			n.broadcast(WSMessage{Type: "clipboard_update", Payload: payload}, client.device.ID)
-			// Write to hub's clipboard if sync enabled
-			cfg := n.store.GetClipboardConfig()
-			if cfg.SyncEnabled && n.clipboard != nil {
+			// Write to hub's clipboard
+			if n.clipboard != nil {
 				if len(payload.Files) > 0 {
 					go n.receiveClipboardFiles(payload.Files, client.httpAddr)
 				} else if payload.ImageData != "" {
@@ -542,7 +506,6 @@ func (n *Node) runSpoke() {
 			// No hub found — maybe I should become hub
 			log.Println("[spoke] no hub found, promoting to hub")
 			n.becomeHub()
-			n.notifySSE()
 			return
 		}
 
@@ -661,41 +624,20 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 	switch msg.Type {
 	case "auth_ok":
 		log.Println("[spoke] connected to hub")
-		n.notifySSE()
 
 	case "auth_fail":
 		log.Println("[spoke] connection rejected by hub")
-		n.notifySSE()
 
 	case "sync":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var s SyncPayload
 		json.Unmarshal(payloadData, &s)
-		n.store.ReplacePanes(s.Panes)
 		n.devicesMu.Lock()
 		n.devices = make(map[string]Device)
 		for _, d := range s.Devices {
 			n.devices[d.ID] = d
 		}
 		n.devicesMu.Unlock()
-		log.Printf("[spoke] synced %d panes", len(s.Panes))
-		n.notifySSE()
-		// Fetch any files referenced in panes that we don't have locally
-		go n.fetchMissingPaneFiles([]string{n.hubAddr})
-
-	case "pane_update":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var payload PaneUpdatePayload
-		json.Unmarshal(payloadData, &payload)
-		n.store.UpsertPane(payload.Pane)
-		n.notifySSE()
-
-	case "pane_delete":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var payload PaneDeletePayload
-		json.Unmarshal(payloadData, &payload)
-		n.store.DeletePaneWithFiles(payload.PaneID)
-		n.notifySSE()
 
 	case "devices":
 		payloadData, _ := json.Marshal(msg.Payload)
@@ -707,7 +649,6 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 			n.devices[d.ID] = d
 		}
 		n.devicesMu.Unlock()
-		n.notifySSE()
 
 	case "file_notify":
 		payloadData, _ := json.Marshal(msg.Payload)
@@ -722,9 +663,8 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		payloadData, _ := json.Marshal(msg.Payload)
 		var payload ClipboardPayload
 		json.Unmarshal(payloadData, &payload)
-		// Write to local clipboard if sync enabled
-		cfg := n.store.GetClipboardConfig()
-		if cfg.SyncEnabled && n.clipboard != nil {
+		// Write to local clipboard
+		if n.clipboard != nil {
 			if len(payload.Files) > 0 {
 				go n.receiveClipboardFiles(payload.Files, n.hubAddr)
 			} else if payload.ImageData != "" {
@@ -770,118 +710,6 @@ func (n *Node) fetchFileFromAddr(fileID, addr string) {
 	log.Printf("[files] fetched %s from %s", fileID, addr)
 }
 
-// fetchMissingPaneFiles scans all panes for file references and fetches any missing files.
-func (n *Node) fetchMissingPaneFiles(addrs []string) {
-	if len(addrs) == 0 {
-		return
-	}
-	panes := n.store.GetPanes()
-	var missing []string
-	seen := make(map[string]bool)
-	for _, p := range panes {
-		matches := fileRefRe.FindAllStringSubmatch(p.Content, -1)
-		for _, m := range matches {
-			fileID := filepath.Base(m[1])
-			if fileID == "" || fileID == "." || fileID == ".." || seen[fileID] {
-				continue
-			}
-			seen[fileID] = true
-			path := n.store.FilePath(fileID)
-			if _, err := os.Stat(path); err == nil {
-				continue // already have it
-			}
-			missing = append(missing, fileID)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-	log.Printf("[files] found %d missing file(s) referenced in panes, fetching...", len(missing))
-	for _, fileID := range missing {
-		for _, addr := range addrs {
-			n.fetchFileFromAddr(fileID, addr)
-			if _, err := os.Stat(n.store.FilePath(fileID)); err == nil {
-				break // got it
-			}
-		}
-	}
-}
-
-// createClipboardPane creates a new pane from clipboard text content.
-// The pane is synced to all peers via pane_update (one tab everywhere).
-func (n *Node) createClipboardPane(content string) {
-	pane := Pane{
-		ID:        generateID(),
-		Name:      clipboardPaneName(content),
-		Type:      "code",
-		Content:   content,
-		Language:  "plaintext",
-		Order:     nowMs(),
-		CreatedBy: n.store.config.DeviceID,
-		CreatedAt: nowMs(),
-		UpdatedAt: nowMs(),
-		Version:   nowMs(),
-	}
-	n.store.UpsertPane(pane)
-	update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: n.store.config.DeviceID}}
-	if n.GetRole() == "hub" {
-		n.broadcast(update, "")
-	} else {
-		n.SendToHub(update)
-	}
-	n.notifySSE()
-	log.Printf("[clipboard] created pane: %s", pane.Name)
-}
-
-// createClipboardImagePane stores image bytes as a file, creates a markdown
-// pane referencing it, and syncs both to peers (one tab everywhere).
-func (n *Node) createClipboardImagePane(imgData []byte, ext, fileName string) {
-	// Store the image file locally and forward to peers.
-	fileID := generateID() + ext
-	path := n.store.FilePath(fileID)
-	if err := os.WriteFile(path, imgData, 0644); err != nil {
-		log.Printf("[clipboard] store image failed: %v", err)
-		return
-	}
-	log.Printf("[clipboard] stored image %s (%d bytes)", fileID, len(imgData))
-
-	if n.GetRole() == "spoke" && n.hubAddr != "" {
-		go forwardFileWithRetry(n, fileID, fileName)
-	}
-	if n.GetRole() == "hub" {
-		n.broadcast(WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
-			FileID: fileID, FileName: fileName, SenderID: n.store.config.DeviceID,
-		}}, "")
-	}
-
-	// Create a markdown pane with the image embedded.
-	imgURL := "/api/files/" + fileID
-	content := fmt.Sprintf("![📋 %s](%s)\n", fileName, imgURL)
-	preview := true
-	pane := Pane{
-		ID:        generateID(),
-		Name:      "📋 " + fileName,
-		Type:      "code",
-		Content:   content,
-		Language:  "markdown",
-		Preview:   &preview,
-		Order:     nowMs(),
-		CreatedBy: n.store.config.DeviceID,
-		CreatedAt: nowMs(),
-		UpdatedAt: nowMs(),
-		Version:   nowMs(),
-	}
-	n.store.UpsertPane(pane)
-	update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: n.store.config.DeviceID}}
-	if n.GetRole() == "hub" {
-		n.broadcast(update, "")
-	} else {
-		n.SendToHub(update)
-	}
-	n.notifySSE()
-	log.Printf("[clipboard] created image pane: %s", pane.Name)
-}
-
 // storeAndForwardFiles copies local files into the file store, forwards them
 // to peers, and returns metadata references for use in clipboard_update or panes.
 func (n *Node) storeAndForwardFiles(paths []string) []ClipboardFileRef {
@@ -918,47 +746,6 @@ func (n *Node) storeAndForwardFiles(paths []string) []ClipboardFileRef {
 		}
 	}
 	return files
-}
-
-// createClipboardFilePaneFromRefs creates a markdown pane listing the given files.
-func (n *Node) createClipboardFilePaneFromRefs(files []ClipboardFileRef) {
-	if len(files) == 0 {
-		return
-	}
-
-	var content strings.Builder
-	for _, f := range files {
-		content.WriteString(fmt.Sprintf("- [%s](/api/files/%s)\n", f.FileName, f.FileID))
-	}
-
-	name := fmt.Sprintf("📋 %d file(s)", len(files))
-	if len(files) == 1 {
-		name = "📋 " + files[0].FileName
-	}
-
-	preview := true
-	pane := Pane{
-		ID:        generateID(),
-		Name:      name,
-		Type:      "code",
-		Content:   content.String(),
-		Language:  "markdown",
-		Preview:   &preview,
-		Order:     nowMs(),
-		CreatedBy: n.store.config.DeviceID,
-		CreatedAt: nowMs(),
-		UpdatedAt: nowMs(),
-		Version:   nowMs(),
-	}
-	n.store.UpsertPane(pane)
-	update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: n.store.config.DeviceID}}
-	if n.GetRole() == "hub" {
-		n.broadcast(update, "")
-	} else {
-		n.SendToHub(update)
-	}
-	n.notifySSE()
-	log.Printf("[clipboard] created file pane: %s", pane.Name)
 }
 
 // receiveClipboardFiles fetches files referenced in a clipboard_update from a
@@ -1061,30 +848,4 @@ func (n *Node) SendToHub(msg WSMessage) error {
 	data, _ := json.Marshal(msg)
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteMessage(websocket.TextMessage, data)
-}
-
-// SSE notification
-func (n *Node) notifySSE() {
-	n.sseMu.Lock()
-	defer n.sseMu.Unlock()
-	for ch := range n.sseSubs {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (n *Node) subscribeSSE() chan struct{} {
-	ch := make(chan struct{}, 1)
-	n.sseMu.Lock()
-	n.sseSubs[ch] = struct{}{}
-	n.sseMu.Unlock()
-	return ch
-}
-
-func (n *Node) unsubscribeSSE(ch chan struct{}) {
-	n.sseMu.Lock()
-	delete(n.sseSubs, ch)
-	n.sseMu.Unlock()
 }

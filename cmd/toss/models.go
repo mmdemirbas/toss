@@ -6,20 +6,6 @@ import (
 	"time"
 )
 
-type Pane struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	Language  string `json:"language,omitempty"`
-	Preview   *bool  `json:"preview,omitempty"`
-	Order     int64  `json:"order,omitempty"`
-	CreatedBy string `json:"createdBy"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-	Version   int64  `json:"version"`
-}
-
 type Device struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -40,16 +26,6 @@ type AuthPayload struct {
 	Port       int    `json:"port,omitempty"`
 }
 
-type PaneUpdatePayload struct {
-	Pane     Pane   `json:"pane"`
-	SenderID string `json:"senderId"`
-}
-
-type PaneDeletePayload struct {
-	PaneID   string `json:"paneId"`
-	SenderID string `json:"senderId"`
-}
-
 type FileNotifyPayload struct {
 	FileID   string `json:"fileId"`
 	FileName string `json:"fileName"`
@@ -57,7 +33,6 @@ type FileNotifyPayload struct {
 }
 
 type SyncPayload struct {
-	Panes   []Pane   `json:"panes"`
 	Devices []Device `json:"devices"`
 }
 
@@ -84,11 +59,6 @@ type ClipboardPayload struct {
 	ImageExt  string             `json:"imageExt,omitempty"`  // e.g. ".png"
 	Files     []ClipboardFileRef `json:"files,omitempty"`     // copied files
 	SenderID  string             `json:"senderId"`
-}
-
-type ClipboardConfig struct {
-	AutoTab     bool `json:"autoTab"`
-	SyncEnabled bool `json:"syncEnabled"`
 }
 
 func generateID() string {

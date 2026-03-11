@@ -2,11 +2,9 @@ package main
 
 import (
 	"encoding/base64"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +18,7 @@ const (
 )
 
 // ClipboardMonitor polls the system clipboard for changes and
-// optionally creates panes and/or broadcasts updates to peers.
+// broadcasts updates to peers.
 type ClipboardMonitor struct {
 	node *Node
 
@@ -80,14 +78,11 @@ func (cm *ClipboardMonitor) Stop() {
 	log.Println("[clipboard] monitor stopped")
 }
 
-// Restart stops and (if config warrants it) restarts the monitor.
+// Restart stops and restarts the monitor.
 func (cm *ClipboardMonitor) Restart() {
 	cm.Stop()
 	time.Sleep(50 * time.Millisecond)
-	cfg := cm.node.store.GetClipboardConfig()
-	if cfg.AutoTab || cfg.SyncEnabled {
-		cm.Start()
-	}
+	cm.Start()
 }
 
 func (cm *ClipboardMonitor) pollLoop() {
@@ -128,13 +123,7 @@ func (cm *ClipboardMonitor) check() {
 			return
 		}
 
-		cfg := cm.node.store.GetClipboardConfig()
-		if cfg.AutoTab {
-			cm.node.createClipboardPane(text)
-		}
-		if cfg.SyncEnabled {
-			cm.node.broadcastClipboardContent(ClipboardPayload{Content: text})
-		}
+		cm.node.broadcastClipboardContent(ClipboardPayload{Content: text})
 		return
 	}
 
@@ -178,20 +167,11 @@ func (cm *ClipboardMonitor) handleImageCheck(currentText string) {
 
 	log.Printf("[clipboard] detected image (%d bytes, %s)", len(imgData), ext)
 
-	cfg := cm.node.store.GetClipboardConfig()
-
-	// autoTab: store image file and create a markdown pane (synced via pane_update)
-	if cfg.AutoTab {
-		fileName := "clipboard-" + time.Now().Format("150405") + ext
-		cm.node.createClipboardImagePane(imgData, ext, fileName)
-	}
 	// sync: send actual image content to peers (self-contained, no file fetch needed)
-	if cfg.SyncEnabled {
-		cm.node.broadcastClipboardContent(ClipboardPayload{
-			ImageData: base64.StdEncoding.EncodeToString(imgData),
-			ImageExt:  ext,
-		})
-	}
+	cm.node.broadcastClipboardContent(ClipboardPayload{
+		ImageData: base64.StdEncoding.EncodeToString(imgData),
+		ImageExt:  ext,
+	})
 }
 
 // WriteClipboard writes text received from a peer without triggering an echo.
@@ -266,20 +246,13 @@ func (cm *ClipboardMonitor) handleFileCheck(currentText string) bool {
 
 	log.Printf("[clipboard] detected %d file(s)", len(validPaths))
 
-	cfg := cm.node.store.GetClipboardConfig()
-
-	// Store and forward files once (shared by autoTab and sync)
+	// Store and forward files once
 	files := cm.node.storeAndForwardFiles(validPaths)
 	if len(files) == 0 {
 		return true
 	}
 
-	if cfg.AutoTab {
-		cm.node.createClipboardFilePaneFromRefs(files)
-	}
-	if cfg.SyncEnabled {
-		cm.node.broadcastClipboardContent(ClipboardPayload{Files: files})
-	}
+	cm.node.broadcastClipboardContent(ClipboardPayload{Files: files})
 	return true
 }
 
@@ -325,17 +298,4 @@ func (cm *ClipboardMonitor) WriteClipboardFiles(paths []string) {
 	} else {
 		log.Printf("[clipboard] wrote %d file(s) to clipboard from peer", len(paths))
 	}
-}
-
-// clipboardPaneName derives a short pane name from clipboard text.
-func clipboardPaneName(content string) string {
-	first := strings.SplitN(strings.TrimSpace(content), "\n", 2)[0]
-	first = strings.TrimSpace(first)
-	if len([]rune(first)) > 40 {
-		first = string([]rune(first)[:40]) + "…"
-	}
-	if first == "" {
-		return fmt.Sprintf("📋 Clipboard %s", time.Now().Format("15:04:05"))
-	}
-	return "📋 " + first
 }

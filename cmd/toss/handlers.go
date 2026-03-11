@@ -2,11 +2,9 @@ package main
 
 import (
 	"bytes"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -16,125 +14,11 @@ import (
 	"time"
 )
 
-//go:embed all:web
-var webFS embed.FS
-
 func SetupHTTP(node *Node) http.Handler {
 	mux := http.NewServeMux()
 
-	// Static files
-	webSub, _ := fs.Sub(webFS, "web")
-	mux.Handle("/", http.FileServer(http.FS(webSub)))
-
 	// WebSocket
 	mux.HandleFunc("/ws", node.HandleWebSocket)
-
-	// Status
-	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		status := map[string]interface{}{
-			"role":       node.GetRole(),
-			"deviceId":   node.store.config.DeviceID,
-			"deviceName": node.store.config.DeviceName,
-			"hubAddr":    node.hubAddr,
-			"devices":    node.getDevices(),
-			"panes":      node.store.GetPanes(),
-			"clipboard":  node.store.GetClipboardConfig(),
-		}
-		json.NewEncoder(w).Encode(status)
-	})
-
-	// Panes CRUD
-	mux.HandleFunc("/api/panes", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method {
-		case "GET":
-			json.NewEncoder(w).Encode(node.store.GetPanes())
-		case "POST":
-			var pane Pane
-			if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
-				http.Error(w, "invalid JSON", 400)
-				return
-			}
-			if pane.ID == "" {
-				pane.ID = generateID()
-			}
-			if pane.Type == "" {
-				pane.Type = "code"
-			}
-			if pane.CreatedAt == 0 {
-				pane.CreatedAt = nowMs()
-			}
-			if pane.Order == 0 {
-				pane.Order = nowMs()
-			}
-			pane.UpdatedAt = nowMs()
-			pane.Version = nowMs()
-			if pane.CreatedBy == "" {
-				pane.CreatedBy = node.store.config.DeviceID
-			}
-			node.store.UpsertPane(pane)
-			update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: node.store.config.DeviceID}}
-			if node.GetRole() == "hub" {
-				node.broadcast(update, "")
-			} else {
-				node.SendToHub(update)
-			}
-			node.notifySSE()
-			json.NewEncoder(w).Encode(pane)
-		default:
-			http.Error(w, "method not allowed", 405)
-		}
-	})
-
-	mux.HandleFunc("/api/panes/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		id := strings.TrimPrefix(r.URL.Path, "/api/panes/")
-		if id == "" {
-			http.Error(w, "missing id", 400)
-			return
-		}
-		switch r.Method {
-		case "PUT":
-			var pane Pane
-			if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
-				http.Error(w, "invalid JSON", 400)
-				return
-			}
-			pane.ID = id
-			if pane.Order == 0 {
-				if existing := node.store.GetPane(id); existing != nil {
-					pane.Order = existing.Order
-				}
-				if pane.Order == 0 {
-					pane.Order = nowMs()
-				}
-			}
-			pane.UpdatedAt = nowMs()
-			pane.Version = nowMs()
-			node.store.UpsertPane(pane)
-			update := WSMessage{Type: "pane_update", Payload: PaneUpdatePayload{Pane: pane, SenderID: node.store.config.DeviceID}}
-			if node.GetRole() == "hub" {
-				node.broadcast(update, "")
-			} else {
-				node.SendToHub(update)
-			}
-			node.notifySSE()
-			json.NewEncoder(w).Encode(pane)
-		case "DELETE":
-			node.store.DeletePaneWithFiles(id)
-			del := WSMessage{Type: "pane_delete", Payload: PaneDeletePayload{PaneID: id, SenderID: node.store.config.DeviceID}}
-			if node.GetRole() == "hub" {
-				node.broadcast(del, "")
-			} else {
-				node.SendToHub(del)
-			}
-			node.notifySSE()
-			json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
-		default:
-			http.Error(w, "method not allowed", 405)
-		}
-	})
 
 	// File upload
 	mux.HandleFunc("/api/files", func(w http.ResponseWriter, r *http.Request) {
@@ -247,27 +131,6 @@ func SetupHTTP(node *Node) http.Handler {
 			return
 		}
 		http.ServeFile(w, r, path)
-	})
-
-	// Clipboard config
-	mux.HandleFunc("/api/clipboard/config", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method {
-		case "GET":
-			json.NewEncoder(w).Encode(node.store.GetClipboardConfig())
-		case "PUT":
-			var cfg ClipboardConfig
-			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-				http.Error(w, "invalid JSON", 400)
-				return
-			}
-			node.store.SetClipboardConfig(cfg)
-			go node.clipboard.Restart()
-			node.notifySSE()
-			json.NewEncoder(w).Encode(cfg)
-		default:
-			http.Error(w, "method not allowed", 405)
-		}
 	})
 
 	return mux

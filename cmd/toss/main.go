@@ -56,9 +56,10 @@ func main() {
 	fmt.Println()
 
 	srv := &http.Server{
-		Addr:     fmt.Sprintf(":%d", *port),
-		Handler:  handler,
-		ErrorLog: log.New(tlsErrorFilter{}, "", log.Ltime|log.Lshortfile),
+		Addr:              fmt.Sprintf(":%d", *port),
+		Handler:           handler,
+		ErrorLog:          log.New(tlsErrorFilter{}, "", log.Ltime|log.Lshortfile),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	sigCh := make(chan os.Signal, 1)

@@ -1086,6 +1086,276 @@ func TestParseURIListEmptyInput(t *testing.T) {
 	}
 }
 
+// ---- Spoke node CRUD paths ----
+
+func spokeNode(t *testing.T) *Node {
+	t.Helper()
+	store := testStore(t)
+	node := NewNode(store, 0)
+	node.roleMu.Lock()
+	node.role = "spoke"
+	node.roleMu.Unlock()
+	// Port 1 is a system port — connections are refused immediately.
+	// This exercises the spoke→hub SendToHub error path without blocking.
+	node.hubAddr = "127.0.0.1:1"
+	return node
+}
+
+func TestCreatePaneAsSpoke(t *testing.T) {
+	node := spokeNode(t)
+	srv := httptest.NewServer(SetupHTTP(node))
+	defer srv.Close()
+
+	body := `{"name":"spoke pane","content":"from spoke"}`
+	resp, err := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestUpdatePaneInheritsExistingOrder(t *testing.T) {
+	// PUT with Order=0 on an existing pane should preserve its stored Order.
+	srv := testServer(t)
+
+	// Create a pane with an explicit order.
+	createBody := `{"name":"original","order":99999}`
+	resp, err := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(createBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created Pane
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	// PUT without setting Order — server should carry the original over.
+	updateBody := `{"name":"updated","content":"new content"}`
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/panes/"+created.ID, strings.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var updated Pane
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Order != created.Order {
+		t.Errorf("expected Order=%d (inherited), got %d", created.Order, updated.Order)
+	}
+}
+
+func TestUpdatePaneAsSpoke(t *testing.T) {
+	node := spokeNode(t)
+	node.store.UpsertPane(Pane{ID: "sp1", Name: "original", Order: 77, Version: 1})
+	srv := httptest.NewServer(SetupHTTP(node))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/panes/sp1", strings.NewReader(`{"name":"updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestDeletePaneAsSpoke(t *testing.T) {
+	node := spokeNode(t)
+	node.store.UpsertPane(Pane{ID: "del1", Name: "to delete", Version: 1})
+	srv := httptest.NewServer(SetupHTTP(node))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/panes/del1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestPeerAddrsSpokWithoutHub(t *testing.T) {
+	// A spoke with no hubAddr should have no peer addresses.
+	store := testStore(t)
+	node := NewNode(store, 0)
+	node.roleMu.Lock()
+	node.role = "spoke"
+	node.roleMu.Unlock()
+	// hubAddr intentionally left empty
+
+	if addrs := node.peerAddrs(); len(addrs) != 0 {
+		t.Errorf("expected no peer addrs for spoke without hub, got %v", addrs)
+	}
+}
+
+// ---- File proxy (peer fetch / forward) ----
+
+func TestFetchFileFromPeerSuccess(t *testing.T) {
+	content := []byte("data from peer node")
+	peer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("norecurse") == "1" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(content)
+		}
+	}))
+	defer peer.Close()
+
+	addr := strings.TrimPrefix(peer.URL, "https://")
+	dst := filepath.Join(t.TempDir(), "fetched.bin")
+
+	if !fetchFileFromPeer(addr, "data.bin", dst) {
+		t.Fatal("expected fetchFileFromPeer to succeed")
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("got %q, want %q", got, content)
+	}
+}
+
+func TestFetchFileFromPeerNotFound(t *testing.T) {
+	peer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer peer.Close()
+
+	addr := strings.TrimPrefix(peer.URL, "https://")
+	dst := filepath.Join(t.TempDir(), "nonexistent.bin")
+
+	if fetchFileFromPeer(addr, "nonexistent.bin", dst) {
+		t.Fatal("expected failure on 404")
+	}
+}
+
+func TestFetchFileFromPeerConnectionError(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "file.bin")
+	// Port 1 is a system port that will refuse connections.
+	if fetchFileFromPeer("127.0.0.1:1", "file.bin", dst) {
+		t.Fatal("expected failure on connection error")
+	}
+}
+
+func TestFetchAndServeFileFetchedFromHub(t *testing.T) {
+	content := []byte("hub file content")
+	hub := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("norecurse") != "1" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(content)
+	}))
+	defer hub.Close()
+
+	store := testStore(t)
+	node := NewNode(store, 0)
+	node.roleMu.Lock()
+	node.role = "spoke"
+	node.roleMu.Unlock()
+	node.hubAddr = strings.TrimPrefix(hub.URL, "https://")
+
+	handler := SetupHTTP(node)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/files/remote.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("got %q, want %q", got, content)
+	}
+}
+
+func TestForwardFile(t *testing.T) {
+	var receivedFileName string
+	var receivedContent []byte
+
+	hub := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer func() { _ = f.Close() }()
+		receivedFileName = hdr.Filename
+		receivedContent, _ = io.ReadAll(f)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer hub.Close()
+
+	node := testNode(t)
+	node.hubAddr = strings.TrimPrefix(hub.URL, "https://")
+
+	fileContent := []byte("forward me to hub")
+	storedName := "upload.bin"
+	if err := os.WriteFile(node.store.FilePath(storedName), fileContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := forwardFile(node, storedName, "original.bin"); err != nil {
+		t.Fatalf("forwardFile: %v", err)
+	}
+	if receivedFileName != "original.bin" {
+		t.Errorf("expected filename 'original.bin', got %q", receivedFileName)
+	}
+	if string(receivedContent) != string(fileContent) {
+		t.Errorf("content mismatch: got %q, want %q", receivedContent, fileContent)
+	}
+}
+
+func TestForwardFileHubError(t *testing.T) {
+	hub := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer hub.Close()
+
+	node := testNode(t)
+	node.hubAddr = strings.TrimPrefix(hub.URL, "https://")
+
+	if err := os.WriteFile(node.store.FilePath("f.bin"), []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := forwardFile(node, "f.bin", "f.bin")
+	if err == nil {
+		t.Fatal("expected error when hub returns 500")
+	}
+}
+
 func TestParseURIListRoundTripWithBuild(t *testing.T) {
 	origPaths := []string{"/home/user/a.txt", "/tmp/b.pdf"}
 	uriList := buildURIList(origPaths)

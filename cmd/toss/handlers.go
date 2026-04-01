@@ -35,7 +35,7 @@ func SetupHTTP(node *Node) http.Handler {
 
 func (node *Node) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	status := map[string]interface{}{
+	status := map[string]any{
 		"role":       node.GetRole(),
 		"deviceId":   node.store.config.DeviceID,
 		"deviceName": node.store.config.DeviceName,
@@ -227,7 +227,7 @@ func (node *Node) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	node.notifyFileStored(storedName, header.Filename)
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"fileId":   storedName,
 		"fileName": header.Filename,
 		"mimeType": header.Header.Get("Content-Type"),

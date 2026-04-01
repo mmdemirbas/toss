@@ -30,7 +30,7 @@ type Device struct {
 // WebSocket message envelope
 type WSMessage struct {
 	Type    string      `json:"type"`
-	Payload interface{} `json:"payload,omitempty"`
+	Payload any `json:"payload,omitempty"`
 }
 
 // Specific payloads

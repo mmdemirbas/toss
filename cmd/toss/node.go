@@ -501,7 +501,7 @@ func (n *Node) sendToClient(client *Client, msg WSMessage) {
 	}
 }
 
-// remarshal converts an interface{} payload (as produced by json.Unmarshal
+// remarshal converts an any payload (as produced by json.Unmarshal
 // into a WSMessage.Payload field) to a concrete type via a JSON round-trip.
 func remarshal(payload, dst any) error {
 	data, err := json.Marshal(payload)

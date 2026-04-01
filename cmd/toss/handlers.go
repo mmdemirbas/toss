@@ -83,7 +83,7 @@ func SetupHTTP(node *Node) http.Handler {
 			node.notifySSE()
 			json.NewEncoder(w).Encode(pane)
 		default:
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
@@ -132,14 +132,14 @@ func SetupHTTP(node *Node) http.Handler {
 			node.notifySSE()
 			json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 		default:
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
 	// File upload
 	mux.HandleFunc("/api/files", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		r.ParseMultipartForm(50 << 20)
@@ -266,7 +266,7 @@ func SetupHTTP(node *Node) http.Handler {
 			node.notifySSE()
 			json.NewEncoder(w).Encode(cfg)
 		default:
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 

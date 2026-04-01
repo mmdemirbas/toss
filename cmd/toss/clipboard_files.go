@@ -107,7 +107,7 @@ func writeClipboardFilesDarwin(paths []string) error {
 	for _, p := range paths {
 		escaped := strings.ReplaceAll(p, "\\", "\\\\")
 		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-		sb.WriteString(fmt.Sprintf("urls's addObject:(current application's NSURL's fileURLWithPath:\"%s\")\n", escaped))
+		fmt.Fprintf(&sb, "urls's addObject:(current application's NSURL's fileURLWithPath:\"%s\")\n", escaped)
 	}
 	sb.WriteString("pb's writeObjects:urls\n")
 

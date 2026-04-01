@@ -928,7 +928,7 @@ func (n *Node) createClipboardFilePaneFromRefs(files []ClipboardFileRef) {
 
 	var content strings.Builder
 	for _, f := range files {
-		content.WriteString(fmt.Sprintf("- [%s](/api/files/%s)\n", f.FileName, f.FileID))
+		fmt.Fprintf(&content, "- [%s](/api/files/%s)\n", f.FileName, f.FileID)
 	}
 
 	name := fmt.Sprintf("📋 %d file(s)", len(files))

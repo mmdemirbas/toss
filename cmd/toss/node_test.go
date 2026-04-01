@@ -45,6 +45,19 @@ func TestTLSErrorFilterDiscardsHandshakeErrors(t *testing.T) {
 	}
 }
 
+func TestTLSErrorFilterPassesThroughOtherErrors(t *testing.T) {
+	f := tlsErrorFilter{}
+	// Non-TLS messages pass through to stderr — just verify no panic and return values.
+	msg := []byte("server: accept error\n")
+	n, err := f.Write(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != len(msg) {
+		t.Errorf("expected n=%d, got %d", len(msg), n)
+	}
+}
+
 // ---- sendSSEState ----
 
 // flusherRecorder wraps httptest.ResponseRecorder and adds http.Flusher.
@@ -75,6 +88,21 @@ func TestSendSSEStateWritesDataEvent(t *testing.T) {
 	if !fr.flushed {
 		t.Error("Flush must be called after writing state")
 	}
+}
+
+// errResponseWriter returns an error on every Write call.
+type errResponseWriter struct{ h http.Header }
+
+func (e *errResponseWriter) Header() http.Header       { return e.h }
+func (e *errResponseWriter) WriteHeader(_ int)          {}
+func (e *errResponseWriter) Write(_ []byte) (int, error) { return 0, http.ErrHijacked }
+func (e *errResponseWriter) Flush()                     {}
+
+func TestSendSSEStateWriteErrorExitsEarly(t *testing.T) {
+	node := testNode(t)
+	ew := &errResponseWriter{h: make(http.Header)}
+	// Must not panic even when the write fails.
+	sendSSEState(ew, ew, node)
 }
 
 // ---- Hub message handlers ----

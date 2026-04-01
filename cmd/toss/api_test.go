@@ -987,6 +987,27 @@ func TestFilterValidFiles(t *testing.T) {
 	}
 }
 
+func TestFilterValidFilesTooManyTruncated(t *testing.T) {
+	node := testNode(t)
+	cm := node.clipboard
+	tmpDir := t.TempDir()
+
+	// Create clipboardMaxFileCount+1 files (21 files, limit is 20).
+	var paths []string
+	for i := range clipboardMaxFileCount + 1 {
+		p := filepath.Join(tmpDir, filepath.FromSlash(strings.Repeat("x", i+1)+".txt"))
+		if err := os.WriteFile(p, []byte("data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+
+	valid := cm.filterValidFiles(paths)
+	if len(valid) != clipboardMaxFileCount {
+		t.Errorf("expected exactly %d files (limit), got %d", clipboardMaxFileCount, len(valid))
+	}
+}
+
 func TestClipboardPayloadFilesJSON(t *testing.T) {
 	payload := ClipboardPayload{
 		Files: []ClipboardFileRef{

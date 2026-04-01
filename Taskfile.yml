@@ -46,6 +46,13 @@ tasks:
       - curl -sfL -o purify.min.js        "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"
       - echo "JS/CSS updated. Fonts: edit font URLs in fonts.css manually if needed."
 
+  quality:
+    desc: Quality gate — tests with race+coverage, then lint
+    cmds:
+      - go test -race -coverprofile=cover.out {{.PKG}}
+      - go tool cover -func=cover.out | tail -1
+      - golangci-lint run --output.tab.path stdout ./...
+
   clean:
     desc: Remove build artifacts
     cmds:

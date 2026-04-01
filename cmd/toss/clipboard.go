@@ -119,8 +119,9 @@ func (cm *ClipboardMonitor) check() {
 	if textChanged {
 		cm.mu.Lock()
 		cm.lastText = text
-		cm.lastImageHash = "" // clipboard is now text
-		cm.lastFileHash = ""  // clipboard is now text
+		cm.lastWrittenText = "" // user explicitly changed clipboard; clear peer echo gate
+		cm.lastImageHash = ""   // clipboard is now text
+		cm.lastFileHash = ""    // clipboard is now text
 		cm.mu.Unlock()
 
 		if len(text) > clipboardMaxTextSize {

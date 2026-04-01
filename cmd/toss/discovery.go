@@ -79,19 +79,52 @@ func broadcastAll(conn net.PacketConn, data []byte) {
 	}
 }
 
-// RunDiscoveryListener listens for broadcasts and responds as hub.
-// Sends collision events when another hub is detected.
-func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- DiscoveryMsg, reverseCh chan<- DiscoveryMsg, stopCh <-chan struct{}) {
+func openDiscoveryConn() (net.PacketConn, error) {
 	var conn net.PacketConn
 	var err error
-	for attempts := 0; attempts < 5; attempts++ {
+	for attempts := range 5 {
 		conn, err = net.ListenPacket("udp4", fmt.Sprintf(":%d", DiscoveryPort))
 		if err == nil {
-			break
+			return conn, nil
 		}
 		log.Printf("[discovery] port %d busy, retry %d/5...", DiscoveryPort, attempts+1)
 		time.Sleep(2 * time.Second)
 	}
+	return nil, err
+}
+
+func handleDiscoveryMessage(conn net.PacketConn, remoteAddr net.Addr, msg DiscoveryMsg, deviceID string, httpPort int, collisionCh, reverseCh chan<- DiscoveryMsg) {
+	switch msg.Type {
+	case "seek":
+		resp := DiscoveryMsg{Magic: MagicHeader, Type: "hub", DeviceID: deviceID, Port: httpPort}
+		data, _ := json.Marshal(resp)
+		if _, err := conn.WriteTo(data, remoteAddr); err != nil {
+			log.Printf("[discovery] reply to seeker: %v", err)
+		}
+	case "hub_announce":
+		host, _, _ := net.SplitHostPort(remoteAddr.String())
+		msg.IP = host
+		select {
+		case collisionCh <- msg:
+		default:
+		}
+	case "reverse_offer":
+		if msg.TargetID != "" && msg.TargetID != deviceID {
+			return
+		}
+		host, _, _ := net.SplitHostPort(remoteAddr.String())
+		msg.IP = host
+		select {
+		case reverseCh <- msg:
+		default:
+		}
+	}
+}
+
+// RunDiscoveryListener listens for broadcasts and responds as hub.
+// Sends collision events when another hub is detected.
+func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- DiscoveryMsg, reverseCh chan<- DiscoveryMsg, stopCh <-chan struct{}) {
+	conn, err := openDiscoveryConn()
 	if err != nil {
 		log.Printf("[discovery] giving up on listener: %v", err)
 		return
@@ -118,39 +151,7 @@ func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- Disc
 		if err := json.Unmarshal(buf[:n], &msg); err != nil || msg.Magic != MagicHeader || msg.DeviceID == deviceID {
 			continue
 		}
-
-		switch msg.Type {
-		case "seek":
-			resp := DiscoveryMsg{
-				Magic:    MagicHeader,
-				Type:     "hub",
-				DeviceID: deviceID,
-				Port:     httpPort,
-			}
-			data, _ := json.Marshal(resp)
-			if _, err := conn.WriteTo(data, remoteAddr); err != nil {
-				log.Printf("[discovery] reply to seeker: %v", err)
-			}
-
-		case "hub_announce":
-			host, _, _ := net.SplitHostPort(remoteAddr.String())
-			msg.IP = host
-			select {
-			case collisionCh <- msg:
-			default:
-			}
-
-		case "reverse_offer":
-			if msg.TargetID != "" && msg.TargetID != deviceID {
-				continue
-			}
-			host, _, _ := net.SplitHostPort(remoteAddr.String())
-			msg.IP = host
-			select {
-			case reverseCh <- msg:
-			default:
-			}
-		}
+		handleDiscoveryMessage(conn, remoteAddr, msg, deviceID, httpPort, collisionCh, reverseCh)
 	}
 }
 

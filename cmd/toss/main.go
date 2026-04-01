@@ -88,7 +88,7 @@ func setupSSE(node *Node, mux *http.ServeMux) {
 	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "streaming unsupported", 500)
+			http.Error(w, "streaming unsupported", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

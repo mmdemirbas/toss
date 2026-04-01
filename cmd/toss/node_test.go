@@ -212,3 +212,29 @@ func TestEnsureFileLocalReturnsTrueWhenFileExists(t *testing.T) {
 		t.Error("expected true for existing file, got false")
 	}
 }
+
+// ---- setupSSE non-Flusher 503 path ----
+
+// noFlushWriter is a minimal http.ResponseWriter that does NOT implement http.Flusher.
+type noFlushWriter struct {
+	code int
+	h    http.Header
+}
+
+func (n *noFlushWriter) Header() http.Header        { return n.h }
+func (n *noFlushWriter) WriteHeader(code int)       { n.code = code }
+func (n *noFlushWriter) Write(b []byte) (int, error) { return len(b), nil }
+
+func TestSetupSSENonFlusherReturns503(t *testing.T) {
+	node := testNode(t)
+	mux := http.NewServeMux()
+	setupSSE(node, mux)
+
+	w := &noFlushWriter{h: make(http.Header)}
+	r, _ := http.NewRequest("GET", "/api/events", nil)
+	mux.ServeHTTP(w, r)
+
+	if w.code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", w.code)
+	}
+}

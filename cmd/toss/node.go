@@ -696,98 +696,102 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 	case "auth_ok":
 		log.Println("[spoke] connected to hub")
 		n.notifySSE()
-
 	case "auth_fail":
 		log.Println("[spoke] connection rejected by hub")
 		n.notifySSE()
-
 	case "sync":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var s SyncPayload
-		if err := json.Unmarshal(payloadData, &s); err != nil {
-			log.Printf("[spoke] unmarshal sync: %v", err)
-			return
-		}
-		n.store.ReplacePanes(s.Panes)
-		n.devicesMu.Lock()
-		n.devices = make(map[string]Device)
-		for _, d := range s.Devices {
-			n.devices[d.ID] = d
-		}
-		n.devicesMu.Unlock()
-		log.Printf("[spoke] synced %d panes", len(s.Panes))
-		n.notifySSE()
-		// Fetch any files referenced in panes that we don't have locally
-		go n.fetchMissingPaneFiles([]string{n.hubAddr})
-
+		n.spokeHandleSync(msg)
 	case "pane_update":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var payload PaneUpdatePayload
-		if err := json.Unmarshal(payloadData, &payload); err != nil {
-			log.Printf("[spoke] unmarshal pane_update: %v", err)
-			return
-		}
-		n.store.UpsertPane(payload.Pane)
-		n.notifySSE()
-
+		n.spokeHandlePaneUpdate(msg)
 	case "pane_delete":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var payload PaneDeletePayload
-		if err := json.Unmarshal(payloadData, &payload); err != nil {
-			log.Printf("[spoke] unmarshal pane_delete: %v", err)
-			return
-		}
-		n.store.DeletePaneWithFiles(payload.PaneID)
-		n.notifySSE()
-
+		n.spokeHandlePaneDelete(msg)
 	case "devices":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var devPayload DevicesPayload
-		if err := json.Unmarshal(payloadData, &devPayload); err != nil {
-			log.Printf("[spoke] unmarshal devices: %v", err)
-			return
-		}
-		n.devicesMu.Lock()
-		n.devices = make(map[string]Device)
-		for _, d := range devPayload.Devices {
-			n.devices[d.ID] = d
-		}
-		n.devicesMu.Unlock()
-		n.notifySSE()
-
+		n.spokeHandleDevices(msg)
 	case "file_notify":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var payload FileNotifyPayload
-		if err := json.Unmarshal(payloadData, &payload); err != nil {
-			log.Printf("[spoke] unmarshal file_notify: %v", err)
-			return
-		}
-		// Pre-fetch the file from hub if we don't have it locally
-		if payload.FileID != "" {
-			go n.fetchFileFromAddr(payload.FileID, n.hubAddr)
-		}
-
+		n.spokeHandleFileNotify(msg)
 	case "clipboard_update":
-		payloadData, _ := json.Marshal(msg.Payload)
-		var payload ClipboardPayload
-		if err := json.Unmarshal(payloadData, &payload); err != nil {
-			log.Printf("[spoke] unmarshal clipboard_update: %v", err)
-			return
-		}
-		// Write to local clipboard if sync enabled
-		cfg := n.store.GetClipboardConfig()
-		if cfg.SyncEnabled && n.clipboard != nil {
-			switch {
-			case len(payload.Files) > 0:
-				go n.receiveClipboardFiles(payload.Files, n.hubAddr)
-			case payload.ImageData != "":
-				if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
-					n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
-				}
-			case payload.Content != "":
-				n.clipboard.WriteClipboard(payload.Content)
-			}
-		}
+		n.spokeHandleClipboardUpdate(msg)
+	}
+}
+
+func (n *Node) updateDevices(devices []Device) {
+	n.devicesMu.Lock()
+	n.devices = make(map[string]Device)
+	for _, d := range devices {
+		n.devices[d.ID] = d
+	}
+	n.devicesMu.Unlock()
+}
+
+func (n *Node) spokeHandleSync(msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var s SyncPayload
+	if err := json.Unmarshal(payloadData, &s); err != nil {
+		log.Printf("[spoke] unmarshal sync: %v", err)
+		return
+	}
+	n.store.ReplacePanes(s.Panes)
+	n.updateDevices(s.Devices)
+	log.Printf("[spoke] synced %d panes", len(s.Panes))
+	n.notifySSE()
+	go n.fetchMissingPaneFiles([]string{n.hubAddr})
+}
+
+func (n *Node) spokeHandlePaneUpdate(msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload PaneUpdatePayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[spoke] unmarshal pane_update: %v", err)
+		return
+	}
+	n.store.UpsertPane(payload.Pane)
+	n.notifySSE()
+}
+
+func (n *Node) spokeHandlePaneDelete(msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload PaneDeletePayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[spoke] unmarshal pane_delete: %v", err)
+		return
+	}
+	n.store.DeletePaneWithFiles(payload.PaneID)
+	n.notifySSE()
+}
+
+func (n *Node) spokeHandleDevices(msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var devPayload DevicesPayload
+	if err := json.Unmarshal(payloadData, &devPayload); err != nil {
+		log.Printf("[spoke] unmarshal devices: %v", err)
+		return
+	}
+	n.updateDevices(devPayload.Devices)
+	n.notifySSE()
+}
+
+func (n *Node) spokeHandleFileNotify(msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload FileNotifyPayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[spoke] unmarshal file_notify: %v", err)
+		return
+	}
+	if payload.FileID != "" {
+		go n.fetchFileFromAddr(payload.FileID, n.hubAddr)
+	}
+}
+
+func (n *Node) spokeHandleClipboardUpdate(msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload ClipboardPayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[spoke] unmarshal clipboard_update: %v", err)
+		return
+	}
+	cfg := n.store.GetClipboardConfig()
+	if cfg.SyncEnabled && n.clipboard != nil {
+		n.applyClipboardPayload(payload, n.hubAddr)
 	}
 }
 

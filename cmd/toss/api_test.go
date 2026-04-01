@@ -262,6 +262,29 @@ func TestMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestPanePutMissingID(t *testing.T) {
+	srv := testServer(t)
+
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/panes/", strings.NewReader(`{"content":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400 for empty pane id, got %d", resp.StatusCode)
+	}
+}
+
+func TestPaneDeleteMethodNotAllowed(t *testing.T) {
+	srv := testServer(t)
+
+	req, _ := http.NewRequest("POST", srv.URL+"/api/panes/some-id", nil)
+	resp, _ := http.DefaultClient.Do(req)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 405 {
+		t.Fatalf("expected 405, got %d", resp.StatusCode)
+	}
+}
+
 // ---- Files ----
 
 func TestFileUploadAndDownload(t *testing.T) {
@@ -325,6 +348,18 @@ func TestFileNotFound(t *testing.T) {
 	}
 }
 
+func TestFileNotFoundNoPeers(t *testing.T) {
+	// Hub with no connected spokes: fetchAndServeFile should return 404
+	// rather than hanging waiting for a peer that doesn't exist.
+	srv := testServer(t)
+
+	resp, _ := http.Get(srv.URL + "/api/files/ghost.txt")
+	_ = resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404 when file absent and no peers, got %d", resp.StatusCode)
+	}
+}
+
 func TestFileInvalidID(t *testing.T) {
 	srv := testServer(t)
 
@@ -341,6 +376,48 @@ func TestFileInvalidID(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode == 200 {
 		t.Fatal("path traversal should not return 200")
+	}
+}
+
+func TestFileUploadForceID(t *testing.T) {
+	srv := testServer(t)
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, _ := w.CreateFormFile("file", "forced.txt")
+	if _, err := part.Write([]byte("forced content")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/files?forceid=myid.txt", w.FormDataContentType(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if result["fileId"] != "myid.txt" {
+		t.Errorf("expected fileId=myid.txt, got %v", result["fileId"])
+	}
+
+	// File should be retrievable by the forced ID.
+	resp2, _ := http.Get(srv.URL + "/api/files/myid.txt")
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode != 200 {
+		t.Fatalf("expected 200 on download by forced id, got %d", resp2.StatusCode)
+	}
+	data, _ := io.ReadAll(resp2.Body)
+	if string(data) != "forced content" {
+		t.Errorf("expected 'forced content', got %q", string(data))
 	}
 }
 

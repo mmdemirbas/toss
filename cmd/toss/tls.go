@@ -30,23 +30,8 @@ func ensureHTTPSCertFiles(baseDir string) (string, string, error) {
 	return certFile, keyFile, nil
 }
 
-func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return err
-	}
-
-	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serial, err := rand.Int(rand.Reader, serialLimit)
-	if err != nil {
-		return err
-	}
-
-	// Collect all local IPs for SANs so inter-node TLS works
-	ips := []net.IP{
-		net.ParseIP("127.0.0.1"),
-		net.ParseIP("::1"),
-	}
+func localSANIPs() []net.IP {
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
 	ifaces, _ := net.Interfaces()
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
@@ -58,6 +43,33 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 				ips = append(ips, ipnet.IP)
 			}
 		}
+	}
+	return ips
+}
+
+func writePEMFile(path, blockType string, bytes []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("[tls] close %s: %v", path, err)
+		}
+	}()
+	return pem.Encode(f, &pem.Block{Type: blockType, Bytes: bytes})
+}
+
+func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return err
 	}
 
 	hostname, _ := os.Hostname()
@@ -78,7 +90,7 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              dnsNames,
-		IPAddresses:           ips,
+		IPAddresses:           localSANIPs(),
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
@@ -86,34 +98,10 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 		return err
 	}
 
-	certOut, err := os.OpenFile(certPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
+	if err := writePEMFile(certPath, "CERTIFICATE", derBytes); err != nil {
 		return err
 	}
-	defer func() {
-		if err := certOut.Close(); err != nil {
-			log.Printf("[tls] close cert file: %v", err)
-		}
-	}()
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
-		return err
-	}
-
-	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := keyOut.Close(); err != nil {
-			log.Printf("[tls] close key file: %v", err)
-		}
-	}()
-	privBytes := x509.MarshalPKCS1PrivateKey(priv)
-	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
-		return err
-	}
-
-	return nil
+	return writePEMFile(keyPath, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(priv))
 }
 
 func fileExists(path string) bool {

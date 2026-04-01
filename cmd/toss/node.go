@@ -1029,66 +1029,76 @@ func (n *Node) createClipboardFilePaneFromRefs(files []ClipboardFileRef) {
 // receiveClipboardFiles fetches files referenced in a clipboard_update from a
 // peer, saves them with their original names, and writes the paths to the
 // system clipboard so the user can paste them.
-func (n *Node) receiveClipboardFiles(files []ClipboardFileRef, fetchAddr string) {
-	recvDir := filepath.Join(n.store.dir, "clipboard_received")
+func prepareClipboardRecvDir(recvDir string) error {
 	if err := os.MkdirAll(recvDir, 0750); err != nil {
-		log.Printf("[clipboard] create recv dir: %v", err)
-		return
+		return err
 	}
-
-	// Clean up files from previous clipboard sync
 	entries, _ := os.ReadDir(recvDir)
 	for _, e := range entries {
 		if err := os.Remove(filepath.Join(recvDir, e.Name())); err != nil {
 			log.Printf("[clipboard] remove old recv file: %v", err)
 		}
 	}
+	return nil
+}
+
+func (n *Node) ensureFileLocal(fileID, fetchAddr string) bool {
+	srcPath := n.store.FilePath(fileID)
+	for range 3 {
+		if _, err := os.Stat(srcPath); err == nil {
+			return true
+		}
+		if fetchAddr != "" {
+			n.fetchFileFromAddr(fileID, fetchAddr)
+		}
+		if _, err := os.Stat(srcPath); err == nil {
+			return true
+		}
+		if n.GetRole() == "spoke" && n.hubAddr != "" && n.hubAddr != fetchAddr {
+			n.fetchFileFromAddr(fileID, n.hubAddr)
+		}
+		if _, err := os.Stat(srcPath); err == nil {
+			return true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	_, err := os.Stat(srcPath)
+	return err == nil
+}
+
+func copyToRecvDir(recvDir, srcPath, fileName string) (string, error) {
+	dstPath := filepath.Join(recvDir, fileName)
+	if _, err := os.Stat(dstPath); err == nil {
+		ext := filepath.Ext(fileName)
+		base := strings.TrimSuffix(fileName, ext)
+		dstPath = filepath.Join(recvDir, base+"_"+generateID()[:4]+ext)
+	}
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(dstPath, data, 0600); err != nil {
+		return "", err
+	}
+	return dstPath, nil
+}
+
+func (n *Node) receiveClipboardFiles(files []ClipboardFileRef, fetchAddr string) {
+	recvDir := filepath.Join(n.store.dir, "clipboard_received")
+	if err := prepareClipboardRecvDir(recvDir); err != nil {
+		log.Printf("[clipboard] create recv dir: %v", err)
+		return
+	}
 
 	var receivedPaths []string
 	for _, f := range files {
-		// Ensure the file is in our local store (fetch from peer if missing)
-		srcPath := n.store.FilePath(f.FileID)
-		for attempt := 0; attempt < 3; attempt++ {
-			if _, err := os.Stat(srcPath); err == nil {
-				break
-			}
-			if fetchAddr != "" {
-				n.fetchFileFromAddr(f.FileID, fetchAddr)
-			}
-			if _, err := os.Stat(srcPath); err == nil {
-				break
-			}
-			// Also try hub (if we're a spoke and fetchAddr was something else)
-			if n.GetRole() == "spoke" && n.hubAddr != "" && n.hubAddr != fetchAddr {
-				n.fetchFileFromAddr(f.FileID, n.hubAddr)
-			}
-			if _, err := os.Stat(srcPath); err == nil {
-				break
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-
-		if _, err := os.Stat(srcPath); err != nil {
+		if !n.ensureFileLocal(f.FileID, fetchAddr) {
 			log.Printf("[clipboard] file %s (%s) not available after retries", f.FileName, f.FileID)
 			continue
 		}
-
-		// Copy to received dir with original name
-		dstPath := filepath.Join(recvDir, f.FileName)
-		if _, err := os.Stat(dstPath); err == nil {
-			// Name collision — add a short suffix
-			ext := filepath.Ext(f.FileName)
-			base := strings.TrimSuffix(f.FileName, ext)
-			dstPath = filepath.Join(recvDir, base+"_"+generateID()[:4]+ext)
-		}
-
-		data, err := os.ReadFile(srcPath)
+		dstPath, err := copyToRecvDir(recvDir, n.store.FilePath(f.FileID), f.FileName)
 		if err != nil {
-			log.Printf("[clipboard] failed to read stored file %s: %v", f.FileID, err)
-			continue
-		}
-		if err := os.WriteFile(dstPath, data, 0600); err != nil {
-			log.Printf("[clipboard] failed to write %s: %v", filepath.Base(dstPath), err)
+			log.Printf("[clipboard] failed to copy %s: %v", f.FileName, err)
 			continue
 		}
 		receivedPaths = append(receivedPaths, dstPath)

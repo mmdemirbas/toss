@@ -1,4 +1,4 @@
-module toss
+module github.com/mmdemirbas/toss
 
 go 1.26.1
 

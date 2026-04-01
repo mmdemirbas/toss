@@ -936,3 +936,129 @@ func TestClipboardPayloadFilesOmitEmpty(t *testing.T) {
 		t.Error("files field should be omitted when empty")
 	}
 }
+
+// ---- Clipboard config API ----
+
+func TestClipboardConfigGetDefault(t *testing.T) {
+	srv := testServer(t)
+
+	resp, err := http.Get(srv.URL + "/api/clipboard/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var cfg ClipboardConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Default config has both features disabled.
+	if cfg.AutoTab {
+		t.Error("autoTab should default to false")
+	}
+	if cfg.SyncEnabled {
+		t.Error("syncEnabled should default to false")
+	}
+}
+
+func TestClipboardConfigPutAndGet(t *testing.T) {
+	srv := testServer(t)
+
+	// Enable both features.
+	body := `{"autoTab":true,"syncEnabled":true}`
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/clipboard/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 on PUT, got %d", resp.StatusCode)
+	}
+
+	// GET must reflect the update.
+	resp, err = http.Get(srv.URL + "/api/clipboard/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var cfg ClipboardConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AutoTab {
+		t.Error("expected autoTab=true after PUT")
+	}
+	if !cfg.SyncEnabled {
+		t.Error("expected syncEnabled=true after PUT")
+	}
+}
+
+func TestClipboardConfigPutInvalidJSON(t *testing.T) {
+	srv := testServer(t)
+
+	req, _ := http.NewRequest("PUT", srv.URL+"/api/clipboard/config", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400 for invalid JSON, got %d", resp.StatusCode)
+	}
+}
+
+func TestClipboardConfigMethodNotAllowed(t *testing.T) {
+	srv := testServer(t)
+
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/clipboard/config", nil)
+	resp, _ := http.DefaultClient.Do(req)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 405 {
+		t.Fatalf("expected 405, got %d", resp.StatusCode)
+	}
+}
+
+// ---- clipboardPaneName ----
+
+func TestClipboardPaneNameShortText(t *testing.T) {
+	name := clipboardPaneName("hello world")
+	if name != "📋 hello world" {
+		t.Errorf("unexpected name: %q", name)
+	}
+}
+
+func TestClipboardPaneNameTruncatesAt40Runes(t *testing.T) {
+	long := strings.Repeat("x", 50)
+	name := clipboardPaneName(long)
+	runes := []rune(name)
+	// "📋 " is 2 runes (emoji + space), then 40 content runes + "…"
+	if len(runes) != 43 {
+		t.Errorf("expected 43 runes (2 prefix + 40 + ellipsis), got %d: %q", len(runes), name)
+	}
+}
+
+func TestClipboardPaneNameUsesFirstLine(t *testing.T) {
+	name := clipboardPaneName("first line\nsecond line")
+	if name != "📋 first line" {
+		t.Errorf("expected first line only, got %q", name)
+	}
+}
+
+func TestClipboardPaneNameEmptyContentFallback(t *testing.T) {
+	name := clipboardPaneName("")
+	if !strings.HasPrefix(name, "📋 Clipboard ") {
+		t.Errorf("empty content should produce fallback name, got %q", name)
+	}
+}
+
+func TestClipboardPaneNameWhitespaceOnlyFallback(t *testing.T) {
+	name := clipboardPaneName("   \n   ")
+	if !strings.HasPrefix(name, "📋 Clipboard ") {
+		t.Errorf("whitespace-only content should produce fallback name, got %q", name)
+	}
+}

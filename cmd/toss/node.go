@@ -843,28 +843,29 @@ func (n *Node) fetchFileFromAddr(fileID, addr string) {
 }
 
 // fetchMissingPaneFiles scans all panes for file references and fetches any missing files.
-func (n *Node) fetchMissingPaneFiles(addrs []string) {
-	if len(addrs) == 0 {
-		return
-	}
-	panes := n.store.GetPanes()
-	var missing []string
+func (n *Node) collectMissingFileIDs() []string {
 	seen := make(map[string]bool)
-	for _, p := range panes {
-		matches := fileRefRe.FindAllStringSubmatch(p.Content, -1)
-		for _, m := range matches {
+	var missing []string
+	for _, p := range n.store.GetPanes() {
+		for _, m := range fileRefRe.FindAllStringSubmatch(p.Content, -1) {
 			fileID := filepath.Base(m[1])
 			if fileID == "" || fileID == "." || fileID == ".." || seen[fileID] {
 				continue
 			}
 			seen[fileID] = true
-			path := n.store.FilePath(fileID)
-			if _, err := os.Stat(path); err == nil {
-				continue // already have it
+			if _, err := os.Stat(n.store.FilePath(fileID)); err != nil {
+				missing = append(missing, fileID)
 			}
-			missing = append(missing, fileID)
 		}
 	}
+	return missing
+}
+
+func (n *Node) fetchMissingPaneFiles(addrs []string) {
+	if len(addrs) == 0 {
+		return
+	}
+	missing := n.collectMissingFileIDs()
 	if len(missing) == 0 {
 		return
 	}
@@ -873,7 +874,7 @@ func (n *Node) fetchMissingPaneFiles(addrs []string) {
 		for _, addr := range addrs {
 			n.fetchFileFromAddr(fileID, addr)
 			if _, err := os.Stat(n.store.FilePath(fileID)); err == nil {
-				break // got it
+				break
 			}
 		}
 	}

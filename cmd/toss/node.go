@@ -270,9 +270,8 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 		return fmt.Errorf("invalid auth message")
 	}
 
-	payloadData, _ := json.Marshal(msg.Payload)
 	var auth AuthPayload
-	if err := json.Unmarshal(payloadData, &auth); err != nil {
+	if err := remarshal(msg.Payload, &auth); err != nil {
 		return fmt.Errorf("unmarshal auth payload: %w", err)
 	}
 	if auth.DeviceID == "" {
@@ -372,9 +371,8 @@ func (n *Node) dispatchHubMessage(client *Client, msg WSMessage) {
 }
 
 func (n *Node) hubHandlePaneUpdate(client *Client, msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload PaneUpdatePayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[hub] unmarshal pane_update: %v", err)
 		return
 	}
@@ -385,9 +383,8 @@ func (n *Node) hubHandlePaneUpdate(client *Client, msg WSMessage) {
 }
 
 func (n *Node) hubHandlePaneDelete(client *Client, msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload PaneDeletePayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[hub] unmarshal pane_delete: %v", err)
 		return
 	}
@@ -398,9 +395,8 @@ func (n *Node) hubHandlePaneDelete(client *Client, msg WSMessage) {
 }
 
 func (n *Node) hubHandleFileNotify(client *Client, msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload FileNotifyPayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[hub] unmarshal file_notify: %v", err)
 		return
 	}
@@ -412,9 +408,8 @@ func (n *Node) hubHandleFileNotify(client *Client, msg WSMessage) {
 }
 
 func (n *Node) hubHandleClipboardUpdate(client *Client, msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload ClipboardPayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[hub] unmarshal clipboard_update: %v", err)
 		return
 	}
@@ -440,7 +435,11 @@ func (n *Node) applyClipboardPayload(payload ClipboardPayload, httpAddr string) 
 }
 
 func (n *Node) broadcast(msg WSMessage, excludeID string) {
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[hub] marshal broadcast %s: %v", msg.Type, err)
+		return
+	}
 	n.clientsMu.RLock()
 	defer n.clientsMu.RUnlock()
 	for id, client := range n.clients {
@@ -485,7 +484,11 @@ func (n *Node) getSpokeAddrs() []string {
 }
 
 func (n *Node) sendToClient(client *Client, msg WSMessage) {
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[hub] marshal send %s: %v", msg.Type, err)
+		return
+	}
 	select {
 	case client.sendCh <- data:
 	default:
@@ -493,6 +496,16 @@ func (n *Node) sendToClient(client *Client, msg WSMessage) {
 		log.Printf("[hub] evicting slow client %s", client.device.Name)
 		_ = client.conn.Close()
 	}
+}
+
+// remarshal converts an interface{} payload (as produced by json.Unmarshal
+// into a WSMessage.Payload field) to a concrete type via a JSON round-trip.
+func remarshal(payload, dst any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, dst)
 }
 
 func (n *Node) clientWriter(client *Client) {
@@ -627,7 +640,11 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 	// Send auth BEFORE exposing conn to other goroutines to prevent concurrent writes
 	if sendAuth {
 		auth := WSMessage{Type: "auth", Payload: AuthPayload{DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName, Port: n.port}}
-		data, _ := json.Marshal(auth)
+		data, err := json.Marshal(auth)
+		if err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("marshal auth: %w", err)
+		}
 		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			_ = conn.Close()
@@ -733,9 +750,8 @@ func (n *Node) updateDevices(devices []Device) {
 }
 
 func (n *Node) spokeHandleSync(msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var s SyncPayload
-	if err := json.Unmarshal(payloadData, &s); err != nil {
+	if err := remarshal(msg.Payload, &s); err != nil {
 		log.Printf("[spoke] unmarshal sync: %v", err)
 		return
 	}
@@ -747,9 +763,8 @@ func (n *Node) spokeHandleSync(msg WSMessage) {
 }
 
 func (n *Node) spokeHandlePaneUpdate(msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload PaneUpdatePayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[spoke] unmarshal pane_update: %v", err)
 		return
 	}
@@ -758,9 +773,8 @@ func (n *Node) spokeHandlePaneUpdate(msg WSMessage) {
 }
 
 func (n *Node) spokeHandlePaneDelete(msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload PaneDeletePayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[spoke] unmarshal pane_delete: %v", err)
 		return
 	}
@@ -769,9 +783,8 @@ func (n *Node) spokeHandlePaneDelete(msg WSMessage) {
 }
 
 func (n *Node) spokeHandleDevices(msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var devPayload DevicesPayload
-	if err := json.Unmarshal(payloadData, &devPayload); err != nil {
+	if err := remarshal(msg.Payload, &devPayload); err != nil {
 		log.Printf("[spoke] unmarshal devices: %v", err)
 		return
 	}
@@ -780,9 +793,8 @@ func (n *Node) spokeHandleDevices(msg WSMessage) {
 }
 
 func (n *Node) spokeHandleFileNotify(msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload FileNotifyPayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[spoke] unmarshal file_notify: %v", err)
 		return
 	}
@@ -792,9 +804,8 @@ func (n *Node) spokeHandleFileNotify(msg WSMessage) {
 }
 
 func (n *Node) spokeHandleClipboardUpdate(msg WSMessage) {
-	payloadData, _ := json.Marshal(msg.Payload)
 	var payload ClipboardPayload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
+	if err := remarshal(msg.Payload, &payload); err != nil {
 		log.Printf("[spoke] unmarshal clipboard_update: %v", err)
 		return
 	}

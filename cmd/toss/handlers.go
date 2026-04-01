@@ -185,8 +185,8 @@ func (node *Node) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-	if err := r.ParseMultipartForm(50 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, clipboardMaxFileSize)
+	if err := r.ParseMultipartForm(clipboardMaxFileSize); err != nil {
 		log.Printf("[files] parse multipart: %v", err)
 	}
 	file, header, err := r.FormFile("file")

@@ -421,6 +421,32 @@ func TestFileUploadForceID(t *testing.T) {
 	}
 }
 
+func TestFileUploadMethodNotAllowed(t *testing.T) {
+	srv := testServer(t)
+	resp, _ := http.Get(srv.URL + "/api/files")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for GET /api/files, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebSocketNotReadyNode(t *testing.T) {
+	// A node with no role assigned should return 503 before the WS upgrade.
+	store := testStore(t)
+	node := NewNode(store, 0) // role is "" by default
+	srv := httptest.NewServer(SetupHTTP(node))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.StatusCode)
+	}
+}
+
 func TestFileUploadNoFile(t *testing.T) {
 	srv := testServer(t)
 

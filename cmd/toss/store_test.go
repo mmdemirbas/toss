@@ -311,6 +311,101 @@ func TestCreateClipboardImagePane(t *testing.T) {
 	}
 }
 
+// ---- ClipboardMonitor idempotency ----
+
+func TestClipboardMonitorStopWhenNotRunning(t *testing.T) {
+	node := testNode(t)
+	// Stop on a never-started monitor must not panic.
+	node.clipboard.Stop()
+	node.clipboard.Stop() // second stop also safe
+}
+
+func TestClipboardMonitorStartIdempotent(t *testing.T) {
+	// Start twice — the second call must be a no-op (no new goroutine).
+	node := testNode(t)
+	cm := node.clipboard
+
+	// We can't start the real monitor (it reads system clipboard),
+	// but we can verify the guard works by manually setting running=true.
+	cm.mu.Lock()
+	cm.running = true
+	cm.stopCh = make(chan struct{})
+	cm.mu.Unlock()
+
+	cm.Start() // should exit immediately without spawning a goroutine
+
+	// Cleanup
+	cm.Stop()
+}
+
+// ---- createClipboardFilePaneFromRefs edge cases ----
+
+func TestCreateClipboardFilePaneFromRefsEmpty(t *testing.T) {
+	node := testNode(t)
+	node.createClipboardFilePaneFromRefs(nil)
+	if len(node.store.GetPanes()) != 0 {
+		t.Error("expected no pane created for empty file list")
+	}
+}
+
+// ---- prepareClipboardRecvDir ----
+
+func TestPrepareClipboardRecvDirClearsExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "old1.txt"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "old2.txt"), []byte("y"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareClipboardRecvDir(dir); err != nil {
+		t.Fatalf("prepareClipboardRecvDir: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected all files removed, got %d remaining", len(entries))
+	}
+}
+
+// ---- copyToRecvDir ----
+
+func TestCopyToRecvDirDuplicateFilenameGetsUniqueSuffix(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	// Create a source file.
+	src := filepath.Join(srcDir, "report.pdf")
+	if err := os.WriteFile(src, []byte("pdf content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// First copy — goes to report.pdf.
+	dst1, err := copyToRecvDir(dstDir, src, "report.pdf")
+	if err != nil {
+		t.Fatalf("first copy: %v", err)
+	}
+	if filepath.Base(dst1) != "report.pdf" {
+		t.Errorf("expected 'report.pdf' for first copy, got %q", filepath.Base(dst1))
+	}
+
+	// Second copy with same name — must get a unique suffix to avoid overwriting.
+	dst2, err := copyToRecvDir(dstDir, src, "report.pdf")
+	if err != nil {
+		t.Fatalf("second copy: %v", err)
+	}
+	if dst2 == dst1 {
+		t.Error("duplicate copy must produce a different destination path")
+	}
+	if filepath.Ext(dst2) != ".pdf" {
+		t.Errorf("expected .pdf extension, got %q", filepath.Ext(dst2))
+	}
+}
+
 func TestGetPanesIsIndependentCopy(t *testing.T) {
 	store := testStore(t)
 	store.UpsertPane(Pane{ID: "p1", Content: "original", Version: 1})

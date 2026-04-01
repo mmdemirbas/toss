@@ -5,12 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-make              # Run dev server at https://localhost:7753 (watches for changes)
-make build        # Build binary for current platform → bin/
-make build-all    # Cross-compile: macOS arm64/amd64, Windows, Linux
-make test         # Run Go tests
-make vendor       # Re-download vendored JS/CSS libs (highlight.js, marked.js, DOMPurify)
-make clean        # Remove build artifacts
+task              # Run dev server at https://localhost:7753 (watches for changes)
+task build        # Build binary for current platform → bin/
+task build-all    # Cross-compile: macOS arm64/amd64, Windows, Linux
+task test         # Run Go tests
+task vendor       # Re-download vendored JS/CSS libs (highlight.js, marked.js, DOMPurify)
+task clean        # Remove build artifacts
 ```
 
 Run a single test:

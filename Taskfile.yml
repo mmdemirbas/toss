@@ -1,0 +1,52 @@
+version: "3"
+
+vars:
+  BIN: bin
+  PKG: ./cmd/toss
+
+tasks:
+  default:
+    desc: Run the development server
+    cmds:
+      - go run {{.PKG}}
+
+  run:
+    desc: Run the development server
+    cmds:
+      - go run {{.PKG}}
+
+  build:
+    desc: Build binary for current platform
+    cmds:
+      - mkdir -p {{.BIN}}
+      - go build -o {{.BIN}}/toss{{exeExt}} {{.PKG}}
+
+  build-all:
+    desc: Cross-compile for macOS arm64/amd64, Windows, Linux
+    cmds:
+      - mkdir -p {{.BIN}}
+      - GOOS=darwin  GOARCH=arm64 go build -o {{.BIN}}/toss-darwin-arm64      {{.PKG}}
+      - GOOS=darwin  GOARCH=amd64 go build -o {{.BIN}}/toss-darwin-amd64      {{.PKG}}
+      - GOOS=windows GOARCH=amd64 go build -o {{.BIN}}/toss-windows-amd64.exe {{.PKG}}
+      - GOOS=linux   GOARCH=amd64 go build -o {{.BIN}}/toss-linux-amd64       {{.PKG}}
+      - ls -lh {{.BIN}}/toss-*
+
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test -v -count=1 {{.PKG}}
+
+  vendor:
+    desc: Re-download vendored JS/CSS libs
+    dir: cmd/toss/web/vendor
+    cmds:
+      - curl -sfL -o highlight.min.js     "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+      - curl -sfL -o github-dark.min.css  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+      - curl -sfL -o marked.min.js        "https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"
+      - curl -sfL -o purify.min.js        "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"
+      - echo "JS/CSS updated. Fonts: edit font URLs in fonts.css manually if needed."
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN}}

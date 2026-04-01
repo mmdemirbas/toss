@@ -11,8 +11,7 @@ Share text, code, images, and files between devices on your local network. Zero 
 ```bash
 git clone https://github.com/mmdemirbas/toss.git
 cd toss
-make            # macOS / Linux
-make.cmd        # Windows
+task
 ```
 
 Open `https://localhost:7753` in your browser (accept the self-signed certificate warning once). That's it.
@@ -21,16 +20,14 @@ Only Go is required. All frontend assets are vendored in the repo — no npm, no
 
 ## Commands
 
-Both `make` (macOS/Linux) and `make.cmd` (Windows) support the same subcommands:
-
 | Command | Description |
 |---|---|
-| `make` | Run the development server (default) |
-| `make build` | Build binary for current platform → `bin/` |
-| `make build-all` | Cross-compile for macOS, Windows, Linux → `bin/` |
-| `make test` | Run tests |
-| `make vendor` | Re-download vendored JS/CSS (only to update lib versions) |
-| `make clean` | Remove build artifacts |
+| `task` | Run the development server (default) |
+| `task build` | Build binary for current platform → `bin/` |
+| `task build-all` | Cross-compile for macOS, Windows, Linux → `bin/` |
+| `task test` | Run tests |
+| `task vendor` | Re-download vendored JS/CSS (only to update lib versions) |
+| `task clean` | Remove build artifacts |
 
 Or use plain Go directly:
 
@@ -46,8 +43,7 @@ go test ./cmd/toss                       # Test
 cmd/toss/           Go source (package main)
   web/              Frontend (HTML/JS/CSS, embedded into binary)
     vendor/         Vendored JS/CSS/fonts (checked into git)
-Makefile            Build commands (macOS / Linux)
-make.cmd            Build commands (Windows)
+Taskfile.yml        Build commands (all platforms)
 bin/                Build output (gitignored)
 ```
 

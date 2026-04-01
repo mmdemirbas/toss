@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -197,3 +198,17 @@ func TestSetupSSEEndpointReturnsEventStream(t *testing.T) {
 	}
 }
 
+
+// ---- ensureFileLocal fast-path ----
+
+func TestEnsureFileLocalReturnsTrueWhenFileExists(t *testing.T) {
+	node := testNode(t)
+	fileID := "fast-path-file"
+	if err := os.WriteFile(node.store.FilePath(fileID), []byte("data"), 0600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if !node.ensureFileLocal(fileID, "") {
+		t.Error("expected true for existing file, got false")
+	}
+}

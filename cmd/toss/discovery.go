@@ -28,14 +28,16 @@ func DiscoverHub(deviceID string, timeout time.Duration) (string, string, error)
 	if err != nil {
 		return "", "", err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	msg := DiscoveryMsg{Magic: MagicHeader, Type: "seek", DeviceID: deviceID}
 	data, _ := json.Marshal(msg)
 
 	broadcastAll(conn, data)
 
-	conn.SetReadDeadline(time.Now().Add(timeout))
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return "", "", fmt.Errorf("set read deadline: %w", err)
+	}
 	buf := make([]byte, 1024)
 	for {
 		n, addr, err := conn.ReadFrom(buf)
@@ -56,7 +58,9 @@ func DiscoverHub(deviceID string, timeout time.Duration) (string, string, error)
 
 func broadcastAll(conn net.PacketConn, data []byte) {
 	globalBcast := &net.UDPAddr{IP: net.IPv4bcast, Port: DiscoveryPort}
-	conn.WriteTo(data, globalBcast)
+	if _, err := conn.WriteTo(data, globalBcast); err != nil {
+		log.Printf("[discovery] broadcast to global: %v", err)
+	}
 
 	ifaces, _ := net.Interfaces()
 	for _, iface := range ifaces {
@@ -67,7 +71,9 @@ func broadcastAll(conn net.PacketConn, data []byte) {
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
 				bcast := broadcastAddr(ipnet)
-				conn.WriteTo(data, &net.UDPAddr{IP: bcast, Port: DiscoveryPort})
+				if _, err := conn.WriteTo(data, &net.UDPAddr{IP: bcast, Port: DiscoveryPort}); err != nil {
+					log.Printf("[discovery] broadcast to %s: %v", bcast, err)
+				}
 			}
 		}
 	}
@@ -90,7 +96,7 @@ func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- Disc
 		log.Printf("[discovery] giving up on listener: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	log.Printf("[discovery] listening on UDP :%d", DiscoveryPort)
 
@@ -101,7 +107,9 @@ func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- Disc
 			return
 		default:
 		}
-		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(1 * time.Second)); err != nil {
+			log.Printf("[discovery] set read deadline: %v", err)
+		}
 		n, remoteAddr, err := conn.ReadFrom(buf)
 		if err != nil {
 			continue
@@ -120,7 +128,9 @@ func RunDiscoveryListener(deviceID string, httpPort int, collisionCh chan<- Disc
 				Port:     httpPort,
 			}
 			data, _ := json.Marshal(resp)
-			conn.WriteTo(data, remoteAddr)
+			if _, err := conn.WriteTo(data, remoteAddr); err != nil {
+				log.Printf("[discovery] reply to seeker: %v", err)
+			}
 
 		case "hub_announce":
 			host, _, _ := net.SplitHostPort(remoteAddr.String())
@@ -149,7 +159,7 @@ func SendReverseOffer(deviceID string, httpPort int, targetHubID string) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	msg := DiscoveryMsg{
 		Magic:    MagicHeader,
@@ -168,7 +178,7 @@ func AnnounceHub(deviceID string, httpPort int, stopCh <-chan struct{}) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	msg := DiscoveryMsg{
 		Magic:    MagicHeader,

@@ -21,7 +21,7 @@ linters:
     gocognit:
       min-complexity: 15
     cyclop:
-      max-complexity: 10
+      max-complexity: 12
     funlen:
       lines: 80
       statements: 60

@@ -182,7 +182,7 @@ func (n *Node) demoteToSpoke(hubAddr string) {
 	// Disconnect all spoke clients gracefully
 	n.clientsMu.Lock()
 	for id, c := range n.clients {
-		c.conn.Close()
+		_ = c.conn.Close()
 		delete(n.clients, id)
 	}
 	n.clientsMu.Unlock()
@@ -222,7 +222,7 @@ func (n *Node) tryReverseDial(msg DiscoveryMsg) {
 	}
 	if err := n.acceptSpokeConn(conn); err != nil {
 		log.Printf("[hub] reverse dial failed: %v", err)
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 
@@ -242,13 +242,13 @@ func (n *Node) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	if role == "hub" {
 		if err := n.acceptSpokeConn(conn); err != nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 		return
 	}
 
 	if err := n.runSpokeConn(conn, true); err != nil {
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 
@@ -256,7 +256,9 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 	client := &Client{conn: conn, sendCh: make(chan []byte, 64)}
 	go n.clientWriter(client)
 
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return fmt.Errorf("set read deadline: %w", err)
+	}
 	_, msgData, err := conn.ReadMessage()
 	if err != nil {
 		return err
@@ -270,7 +272,9 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 
 	payloadData, _ := json.Marshal(msg.Payload)
 	var auth AuthPayload
-	json.Unmarshal(payloadData, &auth)
+	if err := json.Unmarshal(payloadData, &auth); err != nil {
+		return fmt.Errorf("unmarshal auth payload: %w", err)
+	}
 	if auth.DeviceID == "" {
 		n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_payload"}})
 		return fmt.Errorf("missing device id")
@@ -278,7 +282,7 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 
 	client.authed = true
 	client.device = Device{ID: auth.DeviceID, Name: auth.DeviceName, Role: "spoke", JoinedAt: nowMs()}
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 
 	// Derive spoke HTTP address from WebSocket connection IP + auth port
 	if auth.Port > 0 {
@@ -313,10 +317,10 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 
 	// Set up hub-side keepalive: detect dead spoke connections
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		return nil
 	})
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	go n.hubPinger(client)
 
 	n.hubReadLoop(client)
@@ -333,7 +337,7 @@ func (n *Node) hubReadLoop(client *Client) {
 		delete(n.devices, client.device.ID)
 		n.devicesMu.Unlock()
 
-		client.conn.Close()
+		_ = client.conn.Close()
 		close(client.sendCh)
 		log.Printf("[hub] device %s disconnected", client.device.Name)
 		n.broadcastDevices()
@@ -354,7 +358,10 @@ func (n *Node) hubReadLoop(client *Client) {
 		case "pane_update":
 			payloadData, _ := json.Marshal(msg.Payload)
 			var payload PaneUpdatePayload
-			json.Unmarshal(payloadData, &payload)
+			if err := json.Unmarshal(payloadData, &payload); err != nil {
+				log.Printf("[hub] unmarshal pane_update: %v", err)
+				continue
+			}
 			payload.SenderID = client.device.ID
 			n.store.UpsertPane(payload.Pane)
 			n.broadcast(WSMessage{Type: "pane_update", Payload: payload}, client.device.ID)
@@ -363,7 +370,10 @@ func (n *Node) hubReadLoop(client *Client) {
 		case "pane_delete":
 			payloadData, _ := json.Marshal(msg.Payload)
 			var payload PaneDeletePayload
-			json.Unmarshal(payloadData, &payload)
+			if err := json.Unmarshal(payloadData, &payload); err != nil {
+				log.Printf("[hub] unmarshal pane_delete: %v", err)
+				continue
+			}
 			payload.SenderID = client.device.ID
 			n.store.DeletePaneWithFiles(payload.PaneID)
 			n.broadcast(WSMessage{Type: "pane_delete", Payload: payload}, client.device.ID)
@@ -372,7 +382,10 @@ func (n *Node) hubReadLoop(client *Client) {
 		case "file_notify":
 			payloadData, _ := json.Marshal(msg.Payload)
 			var payload FileNotifyPayload
-			json.Unmarshal(payloadData, &payload)
+			if err := json.Unmarshal(payloadData, &payload); err != nil {
+				log.Printf("[hub] unmarshal file_notify: %v", err)
+				continue
+			}
 			payload.SenderID = client.device.ID
 			// Hub: fetch the file from the spoke if we don't have it
 			if payload.FileID != "" {
@@ -384,7 +397,10 @@ func (n *Node) hubReadLoop(client *Client) {
 		case "clipboard_update":
 			payloadData, _ := json.Marshal(msg.Payload)
 			var payload ClipboardPayload
-			json.Unmarshal(payloadData, &payload)
+			if err := json.Unmarshal(payloadData, &payload); err != nil {
+				log.Printf("[hub] unmarshal clipboard_update: %v", err)
+				continue
+			}
 			payload.SenderID = client.device.ID
 			// Relay to other spokes
 			n.broadcast(WSMessage{Type: "clipboard_update", Payload: payload}, client.device.ID)
@@ -417,7 +433,7 @@ func (n *Node) broadcast(msg WSMessage, excludeID string) {
 			default:
 				// Channel full — slow/dead client, force disconnect
 				log.Printf("[hub] evicting slow client %s (broadcast)", client.device.Name)
-				client.conn.Close()
+				_ = client.conn.Close()
 			}
 		}
 	}
@@ -458,19 +474,19 @@ func (n *Node) sendToClient(client *Client, msg WSMessage) {
 	default:
 		// Channel full — slow/dead client, force disconnect
 		log.Printf("[hub] evicting slow client %s", client.device.Name)
-		client.conn.Close()
+		_ = client.conn.Close()
 	}
 }
 
 func (n *Node) clientWriter(client *Client) {
 	for data := range client.sendCh {
 		client.mu.Lock()
-		client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_ = client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		err := client.conn.WriteMessage(websocket.TextMessage, data)
 		client.mu.Unlock()
 		if err != nil {
 			// Force-close so hubReadLoop unblocks and runs cleanup
-			client.conn.Close()
+			_ = client.conn.Close()
 			return
 		}
 	}
@@ -486,11 +502,11 @@ func (n *Node) hubPinger(client *Client) {
 			return
 		case <-ticker.C:
 			client.mu.Lock()
-			client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			err := client.conn.WriteMessage(websocket.PingMessage, nil)
 			client.mu.Unlock()
 			if err != nil {
-				client.conn.Close()
+				_ = client.conn.Close()
 				return
 			}
 		}
@@ -586,9 +602,9 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 	if sendAuth {
 		auth := WSMessage{Type: "auth", Payload: AuthPayload{DeviceID: n.store.config.DeviceID, DeviceName: n.store.config.DeviceName, Port: n.port}}
 		data, _ := json.Marshal(auth)
-		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return err
 		}
 	}
@@ -596,7 +612,7 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 	// Now safely publish the connection
 	n.hubConnMu.Lock()
 	if n.hubConn != nil && n.hubConn != conn {
-		n.hubConn.Close()
+		_ = n.hubConn.Close()
 	}
 	n.hubConn = conn
 	n.hubConnMu.Unlock()
@@ -607,13 +623,13 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 			n.hubConn = nil
 		}
 		n.hubConnMu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	// Set up keepalive pings with initial read deadline
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		return nil
 	})
 	go n.spokePinger(conn)
@@ -625,7 +641,7 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 			return fmt.Errorf("read error: %w", err)
 		}
 		// Reset deadline on any successful read (hub may send data instead of pong)
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		var msg WSMessage
 		if err := json.Unmarshal(msgData, &msg); err != nil {
 			continue
@@ -647,11 +663,11 @@ func (n *Node) spokePinger(conn *websocket.Conn) {
 				n.hubConnMu.Unlock()
 				return
 			}
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			err := conn.WriteMessage(websocket.PingMessage, nil)
 			n.hubConnMu.Unlock()
 			if err != nil {
-				conn.Close()
+				_ = conn.Close()
 				return
 			}
 		}
@@ -671,7 +687,10 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 	case "sync":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var s SyncPayload
-		json.Unmarshal(payloadData, &s)
+		if err := json.Unmarshal(payloadData, &s); err != nil {
+			log.Printf("[spoke] unmarshal sync: %v", err)
+			return
+		}
 		n.store.ReplacePanes(s.Panes)
 		n.devicesMu.Lock()
 		n.devices = make(map[string]Device)
@@ -687,21 +706,30 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 	case "pane_update":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var payload PaneUpdatePayload
-		json.Unmarshal(payloadData, &payload)
+		if err := json.Unmarshal(payloadData, &payload); err != nil {
+			log.Printf("[spoke] unmarshal pane_update: %v", err)
+			return
+		}
 		n.store.UpsertPane(payload.Pane)
 		n.notifySSE()
 
 	case "pane_delete":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var payload PaneDeletePayload
-		json.Unmarshal(payloadData, &payload)
+		if err := json.Unmarshal(payloadData, &payload); err != nil {
+			log.Printf("[spoke] unmarshal pane_delete: %v", err)
+			return
+		}
 		n.store.DeletePaneWithFiles(payload.PaneID)
 		n.notifySSE()
 
 	case "devices":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var devPayload DevicesPayload
-		json.Unmarshal(payloadData, &devPayload)
+		if err := json.Unmarshal(payloadData, &devPayload); err != nil {
+			log.Printf("[spoke] unmarshal devices: %v", err)
+			return
+		}
 		n.devicesMu.Lock()
 		n.devices = make(map[string]Device)
 		for _, d := range devPayload.Devices {
@@ -713,7 +741,10 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 	case "file_notify":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var payload FileNotifyPayload
-		json.Unmarshal(payloadData, &payload)
+		if err := json.Unmarshal(payloadData, &payload); err != nil {
+			log.Printf("[spoke] unmarshal file_notify: %v", err)
+			return
+		}
 		// Pre-fetch the file from hub if we don't have it locally
 		if payload.FileID != "" {
 			go n.fetchFileFromAddr(payload.FileID, n.hubAddr)
@@ -722,7 +753,10 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 	case "clipboard_update":
 		payloadData, _ := json.Marshal(msg.Payload)
 		var payload ClipboardPayload
-		json.Unmarshal(payloadData, &payload)
+		if err := json.Unmarshal(payloadData, &payload); err != nil {
+			log.Printf("[spoke] unmarshal clipboard_update: %v", err)
+			return
+		}
 		// Write to local clipboard if sync enabled
 		cfg := n.store.GetClipboardConfig()
 		if cfg.SyncEnabled && n.clipboard != nil {
@@ -753,22 +787,28 @@ func (n *Node) fetchFileFromAddr(fileID, addr string) {
 	resp, err := insecureHTTPClient.Get(url)
 	if err != nil || resp.StatusCode != 200 {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		log.Printf("[files] fetch %s from %s failed: %v", fileID, addr, err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	dst, err := os.Create(path)
 	if err != nil {
 		return
 	}
 	if _, err := io.Copy(dst, resp.Body); err != nil {
-		dst.Close()
-		os.Remove(path)
+		if cErr := dst.Close(); cErr != nil {
+			log.Printf("[files] close dst: %v", cErr)
+		}
+		if rErr := os.Remove(path); rErr != nil {
+			log.Printf("[files] remove partial: %v", rErr)
+		}
 		return
 	}
-	dst.Close()
+	if err := dst.Close(); err != nil {
+		log.Printf("[files] close dst: %v", err)
+	}
 	log.Printf("[files] fetched %s from %s", fileID, addr)
 }
 
@@ -829,7 +869,9 @@ func (n *Node) createClipboardPane(content string) {
 	if n.GetRole() == "hub" {
 		n.broadcast(update, "")
 	} else {
-		n.SendToHub(update)
+		if err := n.SendToHub(update); err != nil {
+			log.Printf("[clipboard] send to hub: %v", err)
+		}
 	}
 	n.notifySSE()
 	log.Printf("[clipboard] created pane: %s", pane.Name)
@@ -878,7 +920,9 @@ func (n *Node) createClipboardImagePane(imgData []byte, ext, fileName string) {
 	if n.GetRole() == "hub" {
 		n.broadcast(update, "")
 	} else {
-		n.SendToHub(update)
+		if err := n.SendToHub(update); err != nil {
+			log.Printf("[clipboard] send to hub: %v", err)
+		}
 	}
 	n.notifySSE()
 	log.Printf("[clipboard] created image pane: %s", pane.Name)
@@ -957,7 +1001,9 @@ func (n *Node) createClipboardFilePaneFromRefs(files []ClipboardFileRef) {
 	if n.GetRole() == "hub" {
 		n.broadcast(update, "")
 	} else {
-		n.SendToHub(update)
+		if err := n.SendToHub(update); err != nil {
+			log.Printf("[clipboard] send to hub: %v", err)
+		}
 	}
 	n.notifySSE()
 	log.Printf("[clipboard] created file pane: %s", pane.Name)
@@ -968,12 +1014,17 @@ func (n *Node) createClipboardFilePaneFromRefs(files []ClipboardFileRef) {
 // system clipboard so the user can paste them.
 func (n *Node) receiveClipboardFiles(files []ClipboardFileRef, fetchAddr string) {
 	recvDir := filepath.Join(n.store.dir, "clipboard_received")
-	os.MkdirAll(recvDir, 0755)
+	if err := os.MkdirAll(recvDir, 0750); err != nil {
+		log.Printf("[clipboard] create recv dir: %v", err)
+		return
+	}
 
 	// Clean up files from previous clipboard sync
 	entries, _ := os.ReadDir(recvDir)
 	for _, e := range entries {
-		os.Remove(filepath.Join(recvDir, e.Name()))
+		if err := os.Remove(filepath.Join(recvDir, e.Name())); err != nil {
+			log.Printf("[clipboard] remove old recv file: %v", err)
+		}
 	}
 
 	var receivedPaths []string
@@ -1041,7 +1092,9 @@ func (n *Node) broadcastClipboardContent(payload ClipboardPayload) {
 	if n.GetRole() == "hub" {
 		n.broadcast(msg, "")
 	} else {
-		n.SendToHub(msg)
+		if err := n.SendToHub(msg); err != nil {
+			log.Printf("[clipboard] send to hub: %v", err)
+		}
 	}
 	switch {
 	case payload.ImageData != "":
@@ -1062,7 +1115,7 @@ func (n *Node) SendToHub(msg WSMessage) error {
 		return fmt.Errorf("not connected to hub")
 	}
 	data, _ := json.Marshal(msg)
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteMessage(websocket.TextMessage, data)
 }
 

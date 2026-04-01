@@ -66,7 +66,7 @@ func TestGetStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -97,14 +97,16 @@ func TestCreatePane(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
 	var pane Pane
-	json.NewDecoder(resp.Body).Decode(&pane)
+	if err := json.NewDecoder(resp.Body).Decode(&pane); err != nil {
+		t.Fatal(err)
+	}
 
 	if pane.ID == "" {
 		t.Error("expected non-empty ID")
@@ -133,10 +135,12 @@ func TestListPanesEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var panes []Pane
-	json.NewDecoder(resp.Body).Decode(&panes)
+	if err := json.NewDecoder(resp.Body).Decode(&panes); err != nil {
+		t.Fatal(err)
+	}
 	if len(panes) != 0 {
 		t.Fatalf("expected 0 panes, got %d", len(panes))
 	}
@@ -149,8 +153,10 @@ func TestPanesCRUD(t *testing.T) {
 	body := `{"name":"CRUD Test","content":"original","language":"go"}`
 	resp, _ := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(body))
 	var created Pane
-	json.NewDecoder(resp.Body).Decode(&created)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	if created.ID == "" {
 		t.Fatal("expected non-empty ID after create")
@@ -159,8 +165,10 @@ func TestPanesCRUD(t *testing.T) {
 	// List — should have 1
 	resp, _ = http.Get(srv.URL + "/api/panes")
 	var panes []Pane
-	json.NewDecoder(resp.Body).Decode(&panes)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&panes); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if len(panes) != 1 {
 		t.Fatalf("expected 1 pane, got %d", len(panes))
 	}
@@ -171,8 +179,10 @@ func TestPanesCRUD(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ = http.DefaultClient.Do(req)
 	var updated Pane
-	json.NewDecoder(resp.Body).Decode(&updated)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	if updated.Name != "Updated" {
 		t.Errorf("expected name 'Updated', got %q", updated.Name)
@@ -187,15 +197,17 @@ func TestPanesCRUD(t *testing.T) {
 	// Delete
 	req, _ = http.NewRequest("DELETE", srv.URL+"/api/panes/"+created.ID, nil)
 	resp, _ = http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200 on delete, got %d", resp.StatusCode)
 	}
 
 	// Verify deleted
 	resp, _ = http.Get(srv.URL + "/api/panes")
-	json.NewDecoder(resp.Body).Decode(&panes)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&panes); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if len(panes) != 0 {
 		t.Fatalf("expected 0 panes after delete, got %d", len(panes))
 	}
@@ -208,8 +220,10 @@ func TestUpdatePreservesOrder(t *testing.T) {
 	body := `{"name":"Ordered","content":"test","language":"go","order":12345}`
 	resp, _ := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(body))
 	var created Pane
-	json.NewDecoder(resp.Body).Decode(&created)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	// Update without sending order — should preserve original
 	updateBody := `{"name":"Still Ordered","content":"updated"}`
@@ -217,8 +231,10 @@ func TestUpdatePreservesOrder(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ = http.DefaultClient.Do(req)
 	var updated Pane
-	json.NewDecoder(resp.Body).Decode(&updated)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	if updated.Order != created.Order {
 		t.Errorf("expected order %d preserved, got %d", created.Order, updated.Order)
@@ -229,7 +245,7 @@ func TestInvalidPaneJSON(t *testing.T) {
 	srv := testServer(t)
 
 	resp, _ := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader("not json"))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Fatalf("expected 400 for invalid JSON, got %d", resp.StatusCode)
 	}
@@ -240,7 +256,7 @@ func TestMethodNotAllowed(t *testing.T) {
 
 	req, _ := http.NewRequest("PATCH", srv.URL+"/api/panes", nil)
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 405 {
 		t.Fatalf("expected 405 for PATCH, got %d", resp.StatusCode)
 	}
@@ -255,16 +271,22 @@ func TestFileUploadAndDownload(t *testing.T) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	part, _ := w.CreateFormFile("file", "hello.txt")
-	part.Write([]byte("hello file content"))
-	w.Close()
+	if _, err := part.Write([]byte("hello file content")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, err := http.Post(srv.URL+"/api/files", w.FormDataContentType(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200 on upload, got %d", resp.StatusCode)
@@ -282,7 +304,7 @@ func TestFileUploadAndDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200 on download, got %d", resp.StatusCode)
@@ -297,7 +319,7 @@ func TestFileNotFound(t *testing.T) {
 	srv := testServer(t)
 
 	resp, _ := http.Get(srv.URL + "/api/files/nonexistent.txt?norecurse=1")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
@@ -308,7 +330,7 @@ func TestFileInvalidID(t *testing.T) {
 
 	// Empty file ID → 400
 	resp, _ := http.Get(srv.URL + "/api/files/")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Fatalf("expected 400 for empty file ID, got %d", resp.StatusCode)
 	}
@@ -316,7 +338,7 @@ func TestFileInvalidID(t *testing.T) {
 	// Path traversal with ../ is handled by Go's HTTP mux (301 redirect + 404),
 	// so the handler never sees it. This is correct Go behavior.
 	resp, _ = http.Get(srv.URL + "/api/files/../etc/passwd")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode == 200 {
 		t.Fatal("path traversal should not return 200")
 	}
@@ -326,7 +348,7 @@ func TestFileUploadNoFile(t *testing.T) {
 	srv := testServer(t)
 
 	resp, _ := http.Post(srv.URL+"/api/files", "application/octet-stream", strings.NewReader("not multipart"))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Fatalf("expected 400 for missing file, got %d", resp.StatusCode)
 	}
@@ -341,25 +363,33 @@ func TestDeletePaneCleansUpFiles(t *testing.T) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	part, _ := w.CreateFormFile("file", "cleanup.txt")
-	part.Write([]byte("delete me"))
-	w.Close()
+	if _, err := part.Write([]byte("delete me")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, _ := http.Post(srv.URL+"/api/files", w.FormDataContentType(), &buf)
 	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	fileID := result["fileId"].(string)
 
 	// Create a pane referencing the file
 	paneBody := `{"name":"With File","content":"![img](/api/files/` + fileID + `)","language":"markdown"}`
 	resp, _ = http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(paneBody))
 	var pane Pane
-	json.NewDecoder(resp.Body).Decode(&pane)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&pane); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	// Verify file exists before delete
 	resp, _ = http.Get(srv.URL + "/api/files/" + fileID)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("file should exist before pane delete, got %d", resp.StatusCode)
 	}
@@ -367,11 +397,11 @@ func TestDeletePaneCleansUpFiles(t *testing.T) {
 	// Delete the pane
 	req, _ := http.NewRequest("DELETE", srv.URL+"/api/panes/"+pane.ID, nil)
 	resp, _ = http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Verify file is cleaned up
 	resp, _ = http.Get(srv.URL + "/api/files/" + fileID + "?norecurse=1")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("file should be deleted after pane delete, got %d", resp.StatusCode)
 	}
@@ -386,14 +416,16 @@ func TestMultiplePanes(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		body := `{"name":"Pane","content":"content","language":"plaintext"}`
 		resp, _ := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(body))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	// List should return 3
 	resp, _ := http.Get(srv.URL + "/api/panes")
 	var panes []Pane
-	json.NewDecoder(resp.Body).Decode(&panes)
-	resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&panes); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 
 	if len(panes) != 3 {
 		t.Fatalf("expected 3 panes, got %d", len(panes))
@@ -498,8 +530,12 @@ func TestReceiveClipboardFilesNameCollision(t *testing.T) {
 	// Two files with the same name
 	fileID1 := generateID() + ".txt"
 	fileID2 := generateID() + ".txt"
-	os.WriteFile(node.store.FilePath(fileID1), []byte("first"), 0600)
-	os.WriteFile(node.store.FilePath(fileID2), []byte("second"), 0600)
+	if err := os.WriteFile(node.store.FilePath(fileID1), []byte("first"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(node.store.FilePath(fileID2), []byte("second"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	refs := []ClipboardFileRef{
 		{FileID: fileID1, FileName: "same.txt", FileSize: 5},
@@ -598,7 +634,9 @@ func TestClipboardFileEndToEnd(t *testing.T) {
 	var srcPaths []string
 	for i, name := range fileNames {
 		p := filepath.Join(tmpDir, name)
-		os.WriteFile(p, []byte(contents[i]), 0600)
+		if err := os.WriteFile(p, []byte(contents[i]), 0600); err != nil {
+			t.Fatal(err)
+		}
 		srcPaths = append(srcPaths, p)
 	}
 
@@ -612,7 +650,9 @@ func TestClipboardFileEndToEnd(t *testing.T) {
 	// (In real flow, this happens via HTTP file forward + file_notify)
 	for _, ref := range refs {
 		srcData, _ := os.ReadFile(sender.store.FilePath(ref.FileID))
-		os.WriteFile(receiver.store.FilePath(ref.FileID), srcData, 0600)
+		if err := os.WriteFile(receiver.store.FilePath(ref.FileID), srcData, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Step 3: Receiver processes the clipboard_update with Files
@@ -823,11 +863,15 @@ func TestFilterValidFiles(t *testing.T) {
 
 	// Create regular files
 	small := filepath.Join(tmpDir, "small.txt")
-	os.WriteFile(small, []byte("ok"), 0600)
+	if err := os.WriteFile(small, []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a directory
 	subDir := filepath.Join(tmpDir, "subdir")
-	os.MkdirAll(subDir, 0755)
+	if err := os.MkdirAll(subDir, 0750); err != nil {
+		t.Fatal(err)
+	}
 
 	// Non-existent file
 	missing := filepath.Join(tmpDir, "missing.txt")

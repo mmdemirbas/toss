@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log"
 	"math/big"
 	"net"
 	"os"
@@ -89,7 +90,11 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	defer certOut.Close()
+	defer func() {
+		if err := certOut.Close(); err != nil {
+			log.Printf("[tls] close cert file: %v", err)
+		}
+	}()
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
 		return err
 	}
@@ -98,7 +103,11 @@ func generateSelfSignedLocalhostCert(certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	defer keyOut.Close()
+	defer func() {
+		if err := keyOut.Close(); err != nil {
+			log.Printf("[tls] close key file: %v", err)
+		}
+	}()
 	privBytes := x509.MarshalPKCS1PrivateKey(priv)
 	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
 		return err

@@ -88,7 +88,7 @@ return ext
 	}
 
 	tmpFile := tmpBase + "." + ext
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	data, err := os.ReadFile(tmpFile)
 	if err != nil || len(data) == 0 {
@@ -169,7 +169,7 @@ func writeClipboardImageLinux(filePath string) error {
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		cmd := exec.CommandContext(ctx, "xclip", "-selection", "clipboard", "-t", "image/png", "-i")
 		cmd.Stdin = f
 		return cmd.Run()
@@ -180,7 +180,7 @@ func writeClipboardImageLinux(filePath string) error {
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		cmd := exec.CommandContext(ctx, "wl-copy", "--type", "image/png")
 		cmd.Stdin = f
 		return cmd.Run()

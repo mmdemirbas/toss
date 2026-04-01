@@ -228,7 +228,7 @@ func (cm *ClipboardMonitor) WriteClipboardImageData(imgData []byte, ext string) 
 		log.Printf("[clipboard] write temp image failed: %v", err)
 		return
 	}
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	if err := writeClipboardImage(tmpFile); err != nil {
 		log.Printf("[clipboard] write image error: %v", err)

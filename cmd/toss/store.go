@@ -60,7 +60,10 @@ func (s *Store) loadConfig() {
 		s.saveConfig()
 		return
 	}
-	json.Unmarshal(data, &s.config)
+	if err := json.Unmarshal(data, &s.config); err != nil {
+		log.Printf("[store] parse config: %v", err)
+		s.config = Config{}
+	}
 	s.normalizeConfig()
 	s.saveConfig()
 }
@@ -80,7 +83,9 @@ func (s *Store) normalizeConfig() {
 
 func (s *Store) saveConfig() {
 	data, _ := json.MarshalIndent(s.config, "", "  ")
-	os.WriteFile(filepath.Join(s.dir, "config.json"), data, 0600)
+	if err := os.WriteFile(filepath.Join(s.dir, "config.json"), data, 0600); err != nil {
+		log.Printf("[store] save config: %v", err)
+	}
 }
 
 func (s *Store) loadPanes() {
@@ -105,7 +110,9 @@ func (s *Store) savePanes() {
 	}
 	s.mu.RUnlock()
 	data, _ := json.MarshalIndent(panes, "", "  ")
-	os.WriteFile(filepath.Join(s.dir, "panes.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(s.dir, "panes.json"), data, 0600); err != nil {
+		log.Printf("[store] save panes: %v", err)
+	}
 }
 
 func (s *Store) GetPanes() []Pane {

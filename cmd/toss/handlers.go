@@ -41,7 +41,9 @@ func SetupHTTP(node *Node) http.Handler {
 			"panes":      node.store.GetPanes(),
 			"clipboard":  node.store.GetClipboardConfig(),
 		}
-		json.NewEncoder(w).Encode(status)
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			log.Printf("[api] encode status: %v", err)
+		}
 	})
 
 	// Panes CRUD
@@ -49,7 +51,9 @@ func SetupHTTP(node *Node) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case "GET":
-			json.NewEncoder(w).Encode(node.store.GetPanes())
+			if err := json.NewEncoder(w).Encode(node.store.GetPanes()); err != nil {
+				log.Printf("[api] encode panes: %v", err)
+			}
 		case "POST":
 			var pane Pane
 			if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
@@ -78,10 +82,14 @@ func SetupHTTP(node *Node) http.Handler {
 			if node.GetRole() == "hub" {
 				node.broadcast(update, "")
 			} else {
-				node.SendToHub(update)
+				if err := node.SendToHub(update); err != nil {
+					log.Printf("[api] send to hub: %v", err)
+				}
 			}
 			node.notifySSE()
-			json.NewEncoder(w).Encode(pane)
+			if err := json.NewEncoder(w).Encode(pane); err != nil {
+				log.Printf("[api] encode pane: %v", err)
+			}
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -117,20 +125,28 @@ func SetupHTTP(node *Node) http.Handler {
 			if node.GetRole() == "hub" {
 				node.broadcast(update, "")
 			} else {
-				node.SendToHub(update)
+				if err := node.SendToHub(update); err != nil {
+					log.Printf("[api] send to hub: %v", err)
+				}
 			}
 			node.notifySSE()
-			json.NewEncoder(w).Encode(pane)
+			if err := json.NewEncoder(w).Encode(pane); err != nil {
+				log.Printf("[api] encode pane: %v", err)
+			}
 		case "DELETE":
 			node.store.DeletePaneWithFiles(id)
 			del := WSMessage{Type: "pane_delete", Payload: PaneDeletePayload{PaneID: id, SenderID: node.store.config.DeviceID}}
 			if node.GetRole() == "hub" {
 				node.broadcast(del, "")
 			} else {
-				node.SendToHub(del)
+				if err := node.SendToHub(del); err != nil {
+					log.Printf("[api] send to hub: %v", err)
+				}
 			}
 			node.notifySSE()
-			json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "deleted"}); err != nil {
+				log.Printf("[api] encode response: %v", err)
+			}
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -142,13 +158,16 @@ func SetupHTTP(node *Node) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		r.ParseMultipartForm(50 << 20)
+		r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
+		if err := r.ParseMultipartForm(50 << 20); err != nil {
+			log.Printf("[files] parse multipart: %v", err)
+		}
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			http.Error(w, "file required", 400)
 			return
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		ext := ""
 		if idx := strings.LastIndex(header.Filename, "."); idx >= 0 {
@@ -167,7 +186,11 @@ func SetupHTTP(node *Node) http.Handler {
 			http.Error(w, "storage error", 500)
 			return
 		}
-		defer dst.Close()
+		defer func() {
+			if err := dst.Close(); err != nil {
+				log.Printf("[files] close dest: %v", err)
+			}
+		}()
 		written, err := io.Copy(dst, file)
 		if err != nil {
 			http.Error(w, "write error", 500)
@@ -189,12 +212,14 @@ func SetupHTTP(node *Node) http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"fileId":   storedName,
 			"fileName": header.Filename,
 			"mimeType": header.Header.Get("Content-Type"),
 			"fileSize": written,
-		})
+		}); err != nil {
+			log.Printf("[files] encode response: %v", err)
+		}
 		log.Printf("[files] stored %s (%s, %d bytes)", storedName, header.Filename, written)
 	})
 
@@ -223,25 +248,31 @@ func SetupHTTP(node *Node) http.Handler {
 				resp, err := insecureHTTPClient.Get(fmt.Sprintf("https://%s/api/files/%s?norecurse=1", addr, fileID))
 				if err != nil || resp.StatusCode != 200 {
 					if resp != nil {
-						resp.Body.Close()
+						_ = resp.Body.Close()
 					}
 					continue
 				}
 				dst, err := os.Create(path)
 				if err == nil {
 					_, copyErr := io.Copy(dst, resp.Body)
-					resp.Body.Close()
+					_ = resp.Body.Close()
 					if copyErr != nil {
-						dst.Close()
-						os.Remove(path)
+						if err := dst.Close(); err != nil {
+							log.Printf("[files] close dst: %v", err)
+						}
+						if err := os.Remove(path); err != nil {
+							log.Printf("[files] remove partial: %v", err)
+						}
 						continue
 					}
-					dst.Close()
+					if err := dst.Close(); err != nil {
+						log.Printf("[files] close dst: %v", err)
+					}
 					log.Printf("[files] fetched %s from %s", fileID, addr)
 					http.ServeFile(w, r, path)
 					return
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 			http.Error(w, "file not found", 404)
 			return
@@ -254,7 +285,9 @@ func SetupHTTP(node *Node) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case "GET":
-			json.NewEncoder(w).Encode(node.store.GetClipboardConfig())
+			if err := json.NewEncoder(w).Encode(node.store.GetClipboardConfig()); err != nil {
+				log.Printf("[api] encode clipboard config: %v", err)
+			}
 		case "PUT":
 			var cfg ClipboardConfig
 			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
@@ -264,7 +297,9 @@ func SetupHTTP(node *Node) http.Handler {
 			node.store.SetClipboardConfig(cfg)
 			go node.clipboard.Restart()
 			node.notifySSE()
-			json.NewEncoder(w).Encode(cfg)
+			if err := json.NewEncoder(w).Encode(cfg); err != nil {
+				log.Printf("[api] encode clipboard config: %v", err)
+			}
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -282,11 +317,13 @@ func forwardFileWithRetry(node *Node, storedName, fileName string) {
 		if err == nil {
 			log.Printf("[files] forwarded %s to hub (attempt %d)", storedName, attempt)
 			// Notify hub via WS as well (in case the HTTP forward was a race)
-			node.SendToHub(WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
+			if err := node.SendToHub(WSMessage{Type: "file_notify", Payload: FileNotifyPayload{
 				FileID:   storedName,
 				FileName: fileName,
 				SenderID: node.store.config.DeviceID,
-			}})
+			}}); err != nil {
+				log.Printf("[files] notify hub: %v", err)
+			}
 			return
 		}
 		log.Printf("[files] forward %s failed (attempt %d/%d): %v", storedName, attempt, maxRetries, err)
@@ -301,7 +338,7 @@ func forwardFile(node *Node, storedName, fileName string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("file", fileName)
@@ -311,7 +348,9 @@ func forwardFile(node *Node, storedName, fileName string) error {
 	if _, err := io.Copy(part, f); err != nil {
 		return err
 	}
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		return err
+	}
 	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/api/files?forceid=%s", node.hubAddr, storedName), body)
 	if err != nil {
 		return err
@@ -321,7 +360,7 @@ func forwardFile(node *Node, storedName, fileName string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("hub returned %d", resp.StatusCode)
 	}

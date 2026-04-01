@@ -110,7 +110,9 @@ func setupSSE(node *Node, mux *http.ServeMux) {
 				sendSSEState(w, flusher, node)
 			case <-time.After(15 * time.Second):
 				// Heartbeat to detect dead connections
-				fmt.Fprintf(w, ": heartbeat\n\n")
+				if _, err := fmt.Fprintf(w, ": heartbeat\n\n"); err != nil {
+					return
+				}
 				flusher.Flush()
 			}
 		}
@@ -125,7 +127,9 @@ func sendSSEState(w http.ResponseWriter, flusher http.Flusher, node *Node) {
 		"clipboard": node.store.GetClipboardConfig(),
 	}
 	jsonData, _ := json.Marshal(data)
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
+		return
+	}
 	flusher.Flush()
 }
 

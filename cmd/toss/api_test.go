@@ -412,7 +412,7 @@ func TestStoreAndForwardFiles(t *testing.T) {
 	var paths []string
 	for i, name := range fileNames {
 		p := filepath.Join(tmpDir, name)
-		if err := os.WriteFile(p, []byte(contents[i]), 0644); err != nil {
+		if err := os.WriteFile(p, []byte(contents[i]), 0600); err != nil {
 			t.Fatal(err)
 		}
 		paths = append(paths, p)
@@ -464,7 +464,7 @@ func TestReceiveClipboardFiles(t *testing.T) {
 	var refs []ClipboardFileRef
 	for i, name := range fileNames {
 		fileID := generateID() + filepath.Ext(name)
-		if err := os.WriteFile(node.store.FilePath(fileID), []byte(contents[i]), 0644); err != nil {
+		if err := os.WriteFile(node.store.FilePath(fileID), []byte(contents[i]), 0600); err != nil {
 			t.Fatal(err)
 		}
 		refs = append(refs, ClipboardFileRef{
@@ -498,8 +498,8 @@ func TestReceiveClipboardFilesNameCollision(t *testing.T) {
 	// Two files with the same name
 	fileID1 := generateID() + ".txt"
 	fileID2 := generateID() + ".txt"
-	os.WriteFile(node.store.FilePath(fileID1), []byte("first"), 0644)
-	os.WriteFile(node.store.FilePath(fileID2), []byte("second"), 0644)
+	os.WriteFile(node.store.FilePath(fileID1), []byte("first"), 0600)
+	os.WriteFile(node.store.FilePath(fileID2), []byte("second"), 0600)
 
 	refs := []ClipboardFileRef{
 		{FileID: fileID1, FileName: "same.txt", FileSize: 5},
@@ -598,7 +598,7 @@ func TestClipboardFileEndToEnd(t *testing.T) {
 	var srcPaths []string
 	for i, name := range fileNames {
 		p := filepath.Join(tmpDir, name)
-		os.WriteFile(p, []byte(contents[i]), 0644)
+		os.WriteFile(p, []byte(contents[i]), 0600)
 		srcPaths = append(srcPaths, p)
 	}
 
@@ -612,7 +612,7 @@ func TestClipboardFileEndToEnd(t *testing.T) {
 	// (In real flow, this happens via HTTP file forward + file_notify)
 	for _, ref := range refs {
 		srcData, _ := os.ReadFile(sender.store.FilePath(ref.FileID))
-		os.WriteFile(receiver.store.FilePath(ref.FileID), srcData, 0644)
+		os.WriteFile(receiver.store.FilePath(ref.FileID), srcData, 0600)
 	}
 
 	// Step 3: Receiver processes the clipboard_update with Files
@@ -823,7 +823,7 @@ func TestFilterValidFiles(t *testing.T) {
 
 	// Create regular files
 	small := filepath.Join(tmpDir, "small.txt")
-	os.WriteFile(small, []byte("ok"), 0644)
+	os.WriteFile(small, []byte("ok"), 0600)
 
 	// Create a directory
 	subDir := filepath.Join(tmpDir, "subdir")

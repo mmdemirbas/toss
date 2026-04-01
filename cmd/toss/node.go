@@ -1019,7 +1019,7 @@ func (n *Node) receiveClipboardFiles(files []ClipboardFileRef, fetchAddr string)
 			log.Printf("[clipboard] failed to read stored file %s: %v", f.FileID, err)
 			continue
 		}
-		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+		if err := os.WriteFile(dstPath, data, 0600); err != nil {
 			log.Printf("[clipboard] failed to write %s: %v", filepath.Base(dstPath), err)
 			continue
 		}

@@ -31,7 +31,10 @@ func DiscoverHub(deviceID string, timeout time.Duration) (string, string, error)
 	defer func() { _ = conn.Close() }()
 
 	msg := DiscoveryMsg{Magic: MagicHeader, Type: "seek", DeviceID: deviceID}
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal seek message: %w", err)
+	}
 
 	broadcastAll(conn, data)
 
@@ -97,7 +100,11 @@ func handleDiscoveryMessage(conn net.PacketConn, remoteAddr net.Addr, msg Discov
 	switch msg.Type {
 	case "seek":
 		resp := DiscoveryMsg{Magic: MagicHeader, Type: "hub", DeviceID: deviceID, Port: httpPort}
-		data, _ := json.Marshal(resp)
+		data, err := json.Marshal(resp)
+		if err != nil {
+			log.Printf("[discovery] marshal hub response: %v", err)
+			return
+		}
 		if _, err := conn.WriteTo(data, remoteAddr); err != nil {
 			log.Printf("[discovery] reply to seeker: %v", err)
 		}
@@ -169,7 +176,11 @@ func SendReverseOffer(deviceID string, httpPort int, targetHubID string) {
 		Port:     httpPort,
 		TargetID: targetHubID,
 	}
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[discovery] marshal reverse_offer: %v", err)
+		return
+	}
 	broadcastAll(conn, data)
 }
 
@@ -187,7 +198,11 @@ func AnnounceHub(deviceID string, httpPort int, stopCh <-chan struct{}) {
 		DeviceID: deviceID,
 		Port:     httpPort,
 	}
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[discovery] marshal hub_announce: %v", err)
+		return
+	}
 
 	broadcastAll(conn, data)
 

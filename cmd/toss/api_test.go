@@ -434,10 +434,34 @@ func TestMultiplePanes(t *testing.T) {
 
 // ---- Clipboard File Sync ----
 
+func checkFileRef(t *testing.T, node *Node, idx int, ref ClipboardFileRef, fileName, content string) {
+	t.Helper()
+	if ref.FileName != fileName {
+		t.Errorf("ref[%d] fileName: expected %q, got %q", idx, fileName, ref.FileName)
+	}
+	if ref.FileSize != int64(len(content)) {
+		t.Errorf("ref[%d] fileSize: expected %d, got %d", idx, len(content), ref.FileSize)
+	}
+	if ref.FileID == "" {
+		t.Errorf("ref[%d] fileID is empty", idx)
+		return
+	}
+	data, err := os.ReadFile(node.store.FilePath(ref.FileID))
+	if err != nil {
+		t.Errorf("ref[%d] stored file not readable: %v", idx, err)
+		return
+	}
+	if string(data) != content {
+		t.Errorf("ref[%d] stored content mismatch: expected %q, got %q", idx, content, string(data))
+	}
+	if filepath.Ext(ref.FileID) != filepath.Ext(fileName) {
+		t.Errorf("ref[%d] extension: expected %q, got %q", idx, filepath.Ext(fileName), filepath.Ext(ref.FileID))
+	}
+}
+
 func TestStoreAndForwardFiles(t *testing.T) {
 	node := testNode(t)
 
-	// Create 3 temp files to simulate copied files
 	tmpDir := t.TempDir()
 	fileNames := []string{"report.pdf", "photo.jpg", "notes.txt"}
 	contents := []string{"pdf content here", "jpeg binary data", "some notes"}
@@ -450,40 +474,13 @@ func TestStoreAndForwardFiles(t *testing.T) {
 		paths = append(paths, p)
 	}
 
-	// Store and forward
 	refs := node.storeAndForwardFiles(paths)
 
 	if len(refs) != 3 {
 		t.Fatalf("expected 3 file refs, got %d", len(refs))
 	}
-
 	for i, ref := range refs {
-		// Check metadata
-		if ref.FileName != fileNames[i] {
-			t.Errorf("ref[%d] fileName: expected %q, got %q", i, fileNames[i], ref.FileName)
-		}
-		if ref.FileSize != int64(len(contents[i])) {
-			t.Errorf("ref[%d] fileSize: expected %d, got %d", i, len(contents[i]), ref.FileSize)
-		}
-		if ref.FileID == "" {
-			t.Errorf("ref[%d] fileID is empty", i)
-		}
-
-		// Verify file was stored in the file store
-		storedPath := node.store.FilePath(ref.FileID)
-		data, err := os.ReadFile(storedPath)
-		if err != nil {
-			t.Errorf("ref[%d] stored file not readable: %v", i, err)
-			continue
-		}
-		if string(data) != contents[i] {
-			t.Errorf("ref[%d] stored content mismatch: expected %q, got %q", i, contents[i], string(data))
-		}
-
-		// Verify file extension is preserved
-		if filepath.Ext(ref.FileID) != filepath.Ext(fileNames[i]) {
-			t.Errorf("ref[%d] extension: expected %q, got %q", i, filepath.Ext(fileNames[i]), filepath.Ext(ref.FileID))
-		}
+		checkFileRef(t, node, i, ref, fileNames[i], contents[i])
 	}
 }
 

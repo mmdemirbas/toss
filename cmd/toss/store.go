@@ -82,7 +82,11 @@ func (s *Store) normalizeConfig() {
 }
 
 func (s *Store) saveConfig() {
-	data, _ := json.MarshalIndent(s.config, "", "  ")
+	data, err := json.MarshalIndent(s.config, "", "  ")
+	if err != nil {
+		log.Printf("[store] marshal config: %v", err)
+		return
+	}
 	if err := os.WriteFile(filepath.Join(s.dir, "config.json"), data, 0600); err != nil {
 		log.Printf("[store] save config: %v", err)
 	}
@@ -109,7 +113,11 @@ func (s *Store) savePanes() {
 		panes = append(panes, *p)
 	}
 	s.mu.RUnlock()
-	data, _ := json.MarshalIndent(panes, "", "  ")
+	data, err := json.MarshalIndent(panes, "", "  ")
+	if err != nil {
+		log.Printf("[store] marshal panes: %v", err)
+		return
+	}
 	if err := os.WriteFile(filepath.Join(s.dir, "panes.json"), data, 0600); err != nil {
 		log.Printf("[store] save panes: %v", err)
 	}

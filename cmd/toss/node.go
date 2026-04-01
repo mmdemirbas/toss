@@ -33,12 +33,13 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	conn     *websocket.Conn
-	device   Device
-	sendCh   chan []byte
-	mu       sync.Mutex
-	authed   bool
-	httpAddr string // "ip:port" of the client's HTTP server
+	conn      *websocket.Conn
+	device    Device
+	sendCh    chan []byte
+	mu        sync.Mutex
+	missCount int // consecutive full-channel misses; evict after 3
+	authed    bool
+	httpAddr  string // "ip:port" of the client's HTTP server
 }
 
 type Node struct {
@@ -448,13 +449,28 @@ func (n *Node) broadcast(msg WSMessage, excludeID string) {
 	defer n.clientsMu.RUnlock()
 	for id, client := range n.clients {
 		if id != excludeID && client.authed {
-			select {
-			case client.sendCh <- data:
-			default:
-				// Channel full — slow/dead client, force disconnect
-				log.Printf("[hub] evicting slow client %s (broadcast)", client.device.Name)
-				_ = client.conn.Close()
-			}
+			n.sendDataToClient(client, data)
+		}
+	}
+}
+
+// sendDataToClient enqueues pre-marshaled data to a client's send channel.
+// Misses (full channel) are tracked; the client is evicted after 3 consecutive misses.
+// A successful enqueue resets the miss counter.
+func (n *Node) sendDataToClient(client *Client, data []byte) {
+	select {
+	case client.sendCh <- data:
+		client.mu.Lock()
+		client.missCount = 0
+		client.mu.Unlock()
+	default:
+		client.mu.Lock()
+		client.missCount++
+		evict := client.missCount >= 3
+		client.mu.Unlock()
+		if evict {
+			log.Printf("[hub] evicting slow client %s", client.device.Name)
+			_ = client.conn.Close()
 		}
 	}
 }
@@ -503,13 +519,7 @@ func (n *Node) sendToClient(client *Client, msg WSMessage) {
 		log.Printf("[hub] marshal send %s: %v", msg.Type, err)
 		return
 	}
-	select {
-	case client.sendCh <- data:
-	default:
-		// Channel full — slow/dead client, force disconnect
-		log.Printf("[hub] evicting slow client %s", client.device.Name)
-		_ = client.conn.Close()
-	}
+	n.sendDataToClient(client, data)
 }
 
 // remarshal converts an any payload (as produced by json.Unmarshal

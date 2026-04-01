@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // ---- capBackoff ----
@@ -236,5 +238,91 @@ func TestSetupSSENonFlusherReturns503(t *testing.T) {
 
 	if w.code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.code)
+	}
+}
+
+// ---- slow client eviction miss counter ----
+
+func TestSlowClientEvictedAfterThreeMisses(t *testing.T) {
+	node := testNode(t)
+
+	// Minimal echo server just to get a real WebSocket connection.
+	echoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer echoSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(echoSrv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	// Unbuffered channel so every send misses.
+	client := &Client{
+		conn:   conn,
+		sendCh: make(chan []byte),
+		authed: true,
+		device: Device{ID: "slow-spoke", Name: "slow-device"},
+	}
+	msg := WSMessage{Type: "pane_update", Payload: "data"}
+
+	node.sendToClient(client, msg)
+	client.mu.Lock()
+	m1 := client.missCount
+	client.mu.Unlock()
+	if m1 != 1 {
+		t.Errorf("after miss 1: expected missCount=1, got %d", m1)
+	}
+
+	node.sendToClient(client, msg)
+	client.mu.Lock()
+	m2 := client.missCount
+	client.mu.Unlock()
+	if m2 != 2 {
+		t.Errorf("after miss 2: expected missCount=2, got %d", m2)
+	}
+
+	node.sendToClient(client, msg)
+	client.mu.Lock()
+	m3 := client.missCount
+	client.mu.Unlock()
+	if m3 != 3 {
+		t.Errorf("after miss 3: expected missCount=3, got %d", m3)
+	}
+
+	// Connection must be closed after the 3rd miss.
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Error("expected connection closed after 3 misses, but read succeeded")
+	}
+}
+
+func TestSlowClientMissCountResetsOnSuccessfulSend(t *testing.T) {
+	node := testNode(t)
+
+	client := &Client{
+		conn:      nil, // not needed: eviction won't trigger
+		sendCh:    make(chan []byte, 1),
+		authed:    true,
+		missCount: 2,
+		device:    Device{ID: "spoke", Name: "device"},
+	}
+	msg := WSMessage{Type: "pane_update", Payload: "data"}
+
+	node.sendToClient(client, msg)
+
+	client.mu.Lock()
+	got := client.missCount
+	client.mu.Unlock()
+	if got != 0 {
+		t.Errorf("expected missCount reset to 0 after successful send, got %d", got)
 	}
 }

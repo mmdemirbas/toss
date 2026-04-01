@@ -328,22 +328,7 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 }
 
 func (n *Node) hubReadLoop(client *Client) {
-	defer func() {
-		n.clientsMu.Lock()
-		delete(n.clients, client.device.ID)
-		n.clientsMu.Unlock()
-
-		n.devicesMu.Lock()
-		delete(n.devices, client.device.ID)
-		n.devicesMu.Unlock()
-
-		_ = client.conn.Close()
-		close(client.sendCh)
-		log.Printf("[hub] device %s disconnected", client.device.Name)
-		n.broadcastDevices()
-		n.notifySSE()
-	}()
-
+	defer n.disconnectClient(client)
 	for {
 		_, msgData, err := client.conn.ReadMessage()
 		if err != nil {
@@ -353,72 +338,104 @@ func (n *Node) hubReadLoop(client *Client) {
 		if err := json.Unmarshal(msgData, &msg); err != nil {
 			continue
 		}
+		n.dispatchHubMessage(client, msg)
+	}
+}
 
-		switch msg.Type {
-		case "pane_update":
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload PaneUpdatePayload
-			if err := json.Unmarshal(payloadData, &payload); err != nil {
-				log.Printf("[hub] unmarshal pane_update: %v", err)
-				continue
-			}
-			payload.SenderID = client.device.ID
-			n.store.UpsertPane(payload.Pane)
-			n.broadcast(WSMessage{Type: "pane_update", Payload: payload}, client.device.ID)
-			n.notifySSE()
+func (n *Node) disconnectClient(client *Client) {
+	n.clientsMu.Lock()
+	delete(n.clients, client.device.ID)
+	n.clientsMu.Unlock()
 
-		case "pane_delete":
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload PaneDeletePayload
-			if err := json.Unmarshal(payloadData, &payload); err != nil {
-				log.Printf("[hub] unmarshal pane_delete: %v", err)
-				continue
-			}
-			payload.SenderID = client.device.ID
-			n.store.DeletePaneWithFiles(payload.PaneID)
-			n.broadcast(WSMessage{Type: "pane_delete", Payload: payload}, client.device.ID)
-			n.notifySSE()
+	n.devicesMu.Lock()
+	delete(n.devices, client.device.ID)
+	n.devicesMu.Unlock()
 
-		case "file_notify":
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload FileNotifyPayload
-			if err := json.Unmarshal(payloadData, &payload); err != nil {
-				log.Printf("[hub] unmarshal file_notify: %v", err)
-				continue
-			}
-			payload.SenderID = client.device.ID
-			// Hub: fetch the file from the spoke if we don't have it
-			if payload.FileID != "" {
-				go n.fetchFileFromAddr(payload.FileID, client.httpAddr)
-			}
-			// Relay to other spokes so they can pre-fetch on demand
-			n.broadcast(WSMessage{Type: "file_notify", Payload: payload}, client.device.ID)
+	_ = client.conn.Close()
+	close(client.sendCh)
+	log.Printf("[hub] device %s disconnected", client.device.Name)
+	n.broadcastDevices()
+	n.notifySSE()
+}
 
-		case "clipboard_update":
-			payloadData, _ := json.Marshal(msg.Payload)
-			var payload ClipboardPayload
-			if err := json.Unmarshal(payloadData, &payload); err != nil {
-				log.Printf("[hub] unmarshal clipboard_update: %v", err)
-				continue
-			}
-			payload.SenderID = client.device.ID
-			// Relay to other spokes
-			n.broadcast(WSMessage{Type: "clipboard_update", Payload: payload}, client.device.ID)
-			// Write to hub's clipboard if sync enabled
-			cfg := n.store.GetClipboardConfig()
-			if cfg.SyncEnabled && n.clipboard != nil {
-				switch {
-				case len(payload.Files) > 0:
-					go n.receiveClipboardFiles(payload.Files, client.httpAddr)
-				case payload.ImageData != "":
-					if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
-						n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
-					}
-				case payload.Content != "":
-					n.clipboard.WriteClipboard(payload.Content)
-				}
-			}
+func (n *Node) dispatchHubMessage(client *Client, msg WSMessage) {
+	switch msg.Type {
+	case "pane_update":
+		n.hubHandlePaneUpdate(client, msg)
+	case "pane_delete":
+		n.hubHandlePaneDelete(client, msg)
+	case "file_notify":
+		n.hubHandleFileNotify(client, msg)
+	case "clipboard_update":
+		n.hubHandleClipboardUpdate(client, msg)
+	}
+}
+
+func (n *Node) hubHandlePaneUpdate(client *Client, msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload PaneUpdatePayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[hub] unmarshal pane_update: %v", err)
+		return
+	}
+	payload.SenderID = client.device.ID
+	n.store.UpsertPane(payload.Pane)
+	n.broadcast(WSMessage{Type: "pane_update", Payload: payload}, client.device.ID)
+	n.notifySSE()
+}
+
+func (n *Node) hubHandlePaneDelete(client *Client, msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload PaneDeletePayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[hub] unmarshal pane_delete: %v", err)
+		return
+	}
+	payload.SenderID = client.device.ID
+	n.store.DeletePaneWithFiles(payload.PaneID)
+	n.broadcast(WSMessage{Type: "pane_delete", Payload: payload}, client.device.ID)
+	n.notifySSE()
+}
+
+func (n *Node) hubHandleFileNotify(client *Client, msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload FileNotifyPayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[hub] unmarshal file_notify: %v", err)
+		return
+	}
+	payload.SenderID = client.device.ID
+	if payload.FileID != "" {
+		go n.fetchFileFromAddr(payload.FileID, client.httpAddr)
+	}
+	n.broadcast(WSMessage{Type: "file_notify", Payload: payload}, client.device.ID)
+}
+
+func (n *Node) hubHandleClipboardUpdate(client *Client, msg WSMessage) {
+	payloadData, _ := json.Marshal(msg.Payload)
+	var payload ClipboardPayload
+	if err := json.Unmarshal(payloadData, &payload); err != nil {
+		log.Printf("[hub] unmarshal clipboard_update: %v", err)
+		return
+	}
+	payload.SenderID = client.device.ID
+	n.broadcast(WSMessage{Type: "clipboard_update", Payload: payload}, client.device.ID)
+	cfg := n.store.GetClipboardConfig()
+	if cfg.SyncEnabled && n.clipboard != nil {
+		n.applyClipboardPayload(payload, client.httpAddr)
+	}
+}
+
+func (n *Node) applyClipboardPayload(payload ClipboardPayload, httpAddr string) {
+	switch {
+	case len(payload.Files) > 0:
+		go n.receiveClipboardFiles(payload.Files, httpAddr)
+	case payload.ImageData != "":
+		if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
+			n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
 		}
+	case payload.Content != "":
+		n.clipboard.WriteClipboard(payload.Content)
 	}
 }
 

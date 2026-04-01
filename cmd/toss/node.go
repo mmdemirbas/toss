@@ -253,9 +253,6 @@ func (n *Node) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
-	client := &Client{conn: conn, sendCh: make(chan []byte, 64)}
-	go n.clientWriter(client)
-
 	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
 		return fmt.Errorf("set read deadline: %w", err)
 	}
@@ -266,7 +263,7 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 
 	var msg WSMessage
 	if err := json.Unmarshal(msgData, &msg); err != nil || msg.Type != "auth" {
-		n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_message"}})
+		writeWSMsg(conn, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_message"}})
 		return fmt.Errorf("invalid auth message")
 	}
 
@@ -275,9 +272,13 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 		return fmt.Errorf("unmarshal auth payload: %w", err)
 	}
 	if auth.DeviceID == "" {
-		n.sendToClient(client, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_payload"}})
+		writeWSMsg(conn, WSMessage{Type: "auth_fail", Payload: map[string]string{"reason": "bad_auth_payload"}})
 		return fmt.Errorf("missing device id")
 	}
+
+	// Auth passed; start async writer now that we know the client is legitimate.
+	client := &Client{conn: conn, sendCh: make(chan []byte, 64)}
+	go n.clientWriter(client)
 
 	client.authed = true
 	client.device = Device{ID: auth.DeviceID, Name: auth.DeviceName, Role: "spoke", JoinedAt: nowMs()}
@@ -484,6 +485,16 @@ func (n *Node) getSpokeAddrs() []string {
 		}
 	}
 	return addrs
+}
+
+// writeWSMsg marshals msg and writes it synchronously to conn.
+// Used for pre-auth responses where the async clientWriter is not yet running.
+func writeWSMsg(conn *websocket.Conn, msg WSMessage) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	_ = conn.WriteMessage(websocket.TextMessage, data)
 }
 
 func (n *Node) sendToClient(client *Client, msg WSMessage) {

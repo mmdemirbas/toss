@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -285,5 +286,63 @@ func TestHubDropsLowerVersionFromSpoke(t *testing.T) {
 	}
 	if got.Content != "hub version" || got.Version != 2000 {
 		t.Errorf("hub accepted lower version: content=%q version=%d", got.Content, got.Version)
+	}
+}
+
+// ---- Auth failure paths ----
+
+func TestAcceptSpokeConnBadJSONAuthMessage(t *testing.T) {
+	_, hubSrv := hubServer(t)
+
+	wsURL := "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("not json")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var msg WSMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if msg.Type != "auth_fail" {
+		t.Errorf("expected auth_fail, got %q", msg.Type)
+	}
+}
+
+func TestAcceptSpokeConnEmptyDeviceID(t *testing.T) {
+	_, hubSrv := hubServer(t)
+
+	wsURL := "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	authMsg := WSMessage{Type: "auth", Payload: AuthPayload{DeviceID: "", DeviceName: "test-device"}}
+	authData, _ := json.Marshal(authMsg)
+	if err := conn.WriteMessage(websocket.TextMessage, authData); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var msg WSMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if msg.Type != "auth_fail" {
+		t.Errorf("expected auth_fail, got %q", msg.Type)
 	}
 }

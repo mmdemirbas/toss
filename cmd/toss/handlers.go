@@ -66,7 +66,7 @@ func (node *Node) handlePanes(w http.ResponseWriter, r *http.Request) {
 func (node *Node) handlePanesPost(w http.ResponseWriter, r *http.Request) {
 	var pane Pane
 	if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
-		http.Error(w, "invalid JSON", 400)
+		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 	if pane.ID == "" {
@@ -105,7 +105,7 @@ func (node *Node) handlePane(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	id := strings.TrimPrefix(r.URL.Path, "/api/panes/")
 	if id == "" {
-		http.Error(w, "missing id", 400)
+		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
 	switch r.Method {
@@ -121,7 +121,7 @@ func (node *Node) handlePane(w http.ResponseWriter, r *http.Request) {
 func (node *Node) handlePanePut(w http.ResponseWriter, r *http.Request, id string) {
 	var pane Pane
 	if err := json.NewDecoder(r.Body).Decode(&pane); err != nil {
-		http.Error(w, "invalid JSON", 400)
+		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 	pane.ID = id
@@ -191,7 +191,7 @@ func (node *Node) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "file required", 400)
+		http.Error(w, "file required", http.StatusBadRequest)
 		return
 	}
 	defer func() { _ = file.Close() }()
@@ -210,7 +210,7 @@ func (node *Node) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 
 	dst, err := os.Create(node.store.FilePath(storedName))
 	if err != nil {
-		http.Error(w, "storage error", 500)
+		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
 	}
 	defer func() {
@@ -220,7 +220,7 @@ func (node *Node) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}()
 	written, err := io.Copy(dst, file)
 	if err != nil {
-		http.Error(w, "write error", 500)
+		http.Error(w, "write error", http.StatusInternalServerError)
 		return
 	}
 
@@ -241,7 +241,7 @@ func (node *Node) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 func (node *Node) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	fileID := strings.TrimPrefix(r.URL.Path, "/api/files/")
 	if fileID == "" || fileID != filepath.Base(fileID) {
-		http.Error(w, "invalid file id", 400)
+		http.Error(w, "invalid file id", http.StatusBadRequest)
 		return
 	}
 	path := node.store.FilePath(fileID)
@@ -295,7 +295,7 @@ func fetchFileFromPeer(addr, fileID, path string) bool {
 
 func (node *Node) fetchAndServeFile(w http.ResponseWriter, r *http.Request, fileID, path string) {
 	if r.URL.Query().Get("norecurse") == "1" {
-		http.Error(w, "file not found", 404)
+		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 	for _, addr := range node.peerAddrs() {
@@ -304,7 +304,7 @@ func (node *Node) fetchAndServeFile(w http.ResponseWriter, r *http.Request, file
 			return
 		}
 	}
-	http.Error(w, "file not found", 404)
+	http.Error(w, "file not found", http.StatusNotFound)
 }
 
 func (node *Node) handleClipboardConfig(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +317,7 @@ func (node *Node) handleClipboardConfig(w http.ResponseWriter, r *http.Request) 
 	case "PUT":
 		var cfg ClipboardConfig
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-			http.Error(w, "invalid JSON", 400)
+			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
 		node.store.SetClipboardConfig(cfg)

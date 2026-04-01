@@ -391,13 +391,14 @@ func (n *Node) hubReadLoop(client *Client) {
 			// Write to hub's clipboard if sync enabled
 			cfg := n.store.GetClipboardConfig()
 			if cfg.SyncEnabled && n.clipboard != nil {
-				if len(payload.Files) > 0 {
+				switch {
+				case len(payload.Files) > 0:
 					go n.receiveClipboardFiles(payload.Files, client.httpAddr)
-				} else if payload.ImageData != "" {
+				case payload.ImageData != "":
 					if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
 						n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
 					}
-				} else if payload.Content != "" {
+				case payload.Content != "":
 					n.clipboard.WriteClipboard(payload.Content)
 				}
 			}
@@ -547,7 +548,7 @@ func (n *Node) runSpoke() {
 		}
 
 		if backoff < maxBackoff {
-			backoff = backoff * 2
+			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
 			}
@@ -725,13 +726,14 @@ func (n *Node) handleSpokeMessage(msg WSMessage) {
 		// Write to local clipboard if sync enabled
 		cfg := n.store.GetClipboardConfig()
 		if cfg.SyncEnabled && n.clipboard != nil {
-			if len(payload.Files) > 0 {
+			switch {
+			case len(payload.Files) > 0:
 				go n.receiveClipboardFiles(payload.Files, n.hubAddr)
-			} else if payload.ImageData != "" {
+			case payload.ImageData != "":
 				if imgBytes, err := base64.StdEncoding.DecodeString(payload.ImageData); err == nil {
 					n.clipboard.WriteClipboardImageData(imgBytes, payload.ImageExt)
 				}
-			} else if payload.Content != "" {
+			case payload.Content != "":
 				n.clipboard.WriteClipboard(payload.Content)
 			}
 		}
@@ -1041,11 +1043,12 @@ func (n *Node) broadcastClipboardContent(payload ClipboardPayload) {
 	} else {
 		n.SendToHub(msg)
 	}
-	if payload.ImageData != "" {
+	switch {
+	case payload.ImageData != "":
 		log.Printf("[clipboard] sent clipboard image update (%d bytes encoded)", len(payload.ImageData))
-	} else if len(payload.Files) > 0 {
+	case len(payload.Files) > 0:
 		log.Printf("[clipboard] sent clipboard file update (%d file(s))", len(payload.Files))
-	} else {
+	default:
 		log.Printf("[clipboard] sent clipboard update (%d bytes)", len(payload.Content))
 	}
 }

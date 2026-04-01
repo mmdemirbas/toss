@@ -1,11 +1,34 @@
-# Binaries
+# Build
 /bin/
+/build/
+/dist/
+/out/
+
+# Go
+*.test
+*.out
+*.prof
+cover.out
+
+# Secrets
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.obsidian/
 
 # OS
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# IntelliJ
-.idea/
+# Logs
+*.log
+*.err
 
 # Syncthing
 .stignore

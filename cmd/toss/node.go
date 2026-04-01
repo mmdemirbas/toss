@@ -281,7 +281,9 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 
 	client.authed = true
 	client.device = Device{ID: auth.DeviceID, Name: auth.DeviceName, Role: "spoke", JoinedAt: nowMs()}
-	_ = conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return fmt.Errorf("clear read deadline: %w", err)
+	}
 
 	// Derive spoke HTTP address from WebSocket connection IP + auth port
 	if auth.Port > 0 {
@@ -316,10 +318,11 @@ func (n *Node) acceptSpokeConn(conn *websocket.Conn) error {
 
 	// Set up hub-side keepalive: detect dead spoke connections
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	})
-	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return fmt.Errorf("set read deadline: %w", err)
+	}
 	go n.hubPinger(client)
 
 	n.hubReadLoop(client)
@@ -670,10 +673,11 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 	}()
 
 	// Set up keepalive pings with initial read deadline
-	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return fmt.Errorf("set read deadline: %w", err)
+	}
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	})
 	go n.spokePinger(conn)
 
@@ -684,7 +688,9 @@ func (n *Node) runSpokeConn(conn *websocket.Conn, sendAuth bool) error {
 			return fmt.Errorf("read error: %w", err)
 		}
 		// Reset deadline on any successful read (hub may send data instead of pong)
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			return fmt.Errorf("reset read deadline: %w", err)
+		}
 		var msg WSMessage
 		if err := json.Unmarshal(msgData, &msg); err != nil {
 			continue

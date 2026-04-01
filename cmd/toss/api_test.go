@@ -925,6 +925,105 @@ func TestClipboardPayloadFilesJSON(t *testing.T) {
 	}
 }
 
+// ---- collectMissingFileIDs ----
+
+func TestCollectMissingFileIDsNoneReferenced(t *testing.T) {
+	node := testNode(t)
+	node.store.UpsertPane(Pane{ID: "p1", Content: "no file refs here", Version: 1})
+
+	missing := node.collectMissingFileIDs()
+	if len(missing) != 0 {
+		t.Errorf("expected 0 missing, got %v", missing)
+	}
+}
+
+func TestCollectMissingFileIDsAllPresent(t *testing.T) {
+	node := testNode(t)
+
+	fileID := "abc123.txt"
+	if err := os.WriteFile(node.store.FilePath(fileID), []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	node.store.UpsertPane(Pane{ID: "p1", Content: "/api/files/" + fileID, Version: 1})
+
+	missing := node.collectMissingFileIDs()
+	if len(missing) != 0 {
+		t.Errorf("expected 0 missing (file exists), got %v", missing)
+	}
+}
+
+func TestCollectMissingFileIDsAbsentFile(t *testing.T) {
+	node := testNode(t)
+
+	node.store.UpsertPane(Pane{ID: "p1", Content: "/api/files/missing123.txt", Version: 1})
+
+	missing := node.collectMissingFileIDs()
+	if len(missing) != 1 || missing[0] != "missing123.txt" {
+		t.Errorf("expected [missing123.txt], got %v", missing)
+	}
+}
+
+func TestCollectMissingFileIDsDeduplicatesAcrossPanes(t *testing.T) {
+	node := testNode(t)
+
+	// Same fileID referenced from two different panes.
+	node.store.UpsertPane(Pane{ID: "p1", Content: "/api/files/dup.txt", Version: 1})
+	node.store.UpsertPane(Pane{ID: "p2", Content: "/api/files/dup.txt", Version: 2})
+
+	missing := node.collectMissingFileIDs()
+	if len(missing) != 1 {
+		t.Errorf("expected 1 deduplicated entry, got %v", missing)
+	}
+}
+
+// ---- parseURIList / buildURIList ----
+
+func TestParseURIListBasic(t *testing.T) {
+	input := "file:///home/user/report.pdf\r\n"
+	paths := parseURIList(input)
+	if len(paths) != 1 || paths[0] != "/home/user/report.pdf" {
+		t.Errorf("expected [/home/user/report.pdf], got %v", paths)
+	}
+}
+
+func TestParseURIListSkipsComments(t *testing.T) {
+	input := "# comment\nfile:///a.txt\n# another comment\nfile:///b.txt\n"
+	paths := parseURIList(input)
+	if len(paths) != 2 {
+		t.Errorf("expected 2 paths, got %v", paths)
+	}
+}
+
+func TestParseURIListSkipsNonFileURIs(t *testing.T) {
+	input := "https://example.com/file.txt\nfile:///local.txt\n"
+	paths := parseURIList(input)
+	if len(paths) != 1 || paths[0] != "/local.txt" {
+		t.Errorf("expected only /local.txt, got %v", paths)
+	}
+}
+
+func TestParseURIListEmptyInput(t *testing.T) {
+	paths := parseURIList("")
+	if len(paths) != 0 {
+		t.Errorf("expected empty, got %v", paths)
+	}
+}
+
+func TestParseURIListRoundTripWithBuild(t *testing.T) {
+	origPaths := []string{"/home/user/a.txt", "/tmp/b.pdf"}
+	uriList := buildURIList(origPaths)
+	roundTripped := parseURIList(uriList)
+
+	if len(roundTripped) != len(origPaths) {
+		t.Fatalf("round-trip length mismatch: %d vs %d", len(roundTripped), len(origPaths))
+	}
+	for i, p := range origPaths {
+		if roundTripped[i] != p {
+			t.Errorf("path[%d]: expected %q, got %q", i, p, roundTripped[i])
+		}
+	}
+}
+
 func TestClipboardPayloadFilesOmitEmpty(t *testing.T) {
 	// Text-only payload should not have "files" key
 	payload := ClipboardPayload{Content: "hello", SenderID: "device-1"}

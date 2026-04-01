@@ -841,7 +841,7 @@ func (n *Node) createClipboardImagePane(imgData []byte, ext, fileName string) {
 	// Store the image file locally and forward to peers.
 	fileID := generateID() + ext
 	path := n.store.FilePath(fileID)
-	if err := os.WriteFile(path, imgData, 0644); err != nil {
+	if err := os.WriteFile(path, imgData, 0600); err != nil {
 		log.Printf("[clipboard] store image failed: %v", err)
 		return
 	}
@@ -898,7 +898,7 @@ func (n *Node) storeAndForwardFiles(paths []string) []ClipboardFileRef {
 			continue
 		}
 		storePath := n.store.FilePath(fileID)
-		if err := os.WriteFile(storePath, data, 0644); err != nil {
+		if err := os.WriteFile(storePath, data, 0600); err != nil {
 			log.Printf("[clipboard] failed to store %s: %v", fileName, err)
 			continue
 		}

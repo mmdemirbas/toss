@@ -15,7 +15,7 @@ import (
 
 func ensureHTTPSCertFiles(baseDir string) (string, string, error) {
 	certDir := filepath.Join(baseDir, "certs")
-	if err := os.MkdirAll(certDir, 0755); err != nil {
+	if err := os.MkdirAll(certDir, 0750); err != nil {
 		return "", "", err
 	}
 	certFile := filepath.Join(certDir, "localhost.crt")

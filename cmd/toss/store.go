@@ -31,7 +31,7 @@ func NewStore() (*Store, error) {
 	}
 	dir := filepath.Join(home, ".toss")
 	filesDir := filepath.Join(dir, "files")
-	if err := os.MkdirAll(filesDir, 0755); err != nil {
+	if err := os.MkdirAll(filesDir, 0750); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 

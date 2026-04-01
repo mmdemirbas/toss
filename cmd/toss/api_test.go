@@ -19,7 +19,7 @@ func testStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
 	filesDir := filepath.Join(dir, "files")
-	if err := os.MkdirAll(filesDir, 0755); err != nil {
+	if err := os.MkdirAll(filesDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	return &Store{

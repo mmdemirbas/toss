@@ -1534,3 +1534,51 @@ func TestClipboardPaneNameWhitespaceOnlyFallback(t *testing.T) {
 		t.Errorf("whitespace-only content should produce fallback name, got %q", name)
 	}
 }
+
+// ---- broadcastClipboardContent ----
+
+func TestBroadcastClipboardContentTextHub(t *testing.T) {
+	node := testNode(t)
+	// hub with no connected spokes: broadcast is a no-op, no panic
+	node.broadcastClipboardContent(ClipboardPayload{Content: "hello"})
+}
+
+func TestBroadcastClipboardContentImageHub(t *testing.T) {
+	node := testNode(t)
+	node.broadcastClipboardContent(ClipboardPayload{ImageData: "base64data", ImageExt: ".png"})
+}
+
+func TestBroadcastClipboardContentFilesHub(t *testing.T) {
+	node := testNode(t)
+	node.broadcastClipboardContent(ClipboardPayload{
+		Files: []ClipboardFileRef{{FileID: "f1.pdf", FileName: "doc.pdf", FileSize: 100}},
+	})
+}
+
+func TestBroadcastClipboardContentSpoke(t *testing.T) {
+	// spoke with no hub connection: SendToHub returns error, which is logged
+	node := spokeNode(t)
+	node.broadcastClipboardContent(ClipboardPayload{Content: "from spoke"})
+}
+
+// ---- hashBytes ----
+
+func TestHashBytesIsStable(t *testing.T) {
+	data := []byte("test image content")
+	h1 := hashBytes(data)
+	h2 := hashBytes(data)
+	if h1 != h2 {
+		t.Error("hashBytes must be deterministic")
+	}
+	if len(h1) != 32 {
+		t.Errorf("expected 32-char MD5 hex, got %d", len(h1))
+	}
+}
+
+func TestHashBytesDifferentInputDifferentHash(t *testing.T) {
+	h1 := hashBytes([]byte("aaa"))
+	h2 := hashBytes([]byte("bbb"))
+	if h1 == h2 {
+		t.Error("different inputs must produce different hashes")
+	}
+}

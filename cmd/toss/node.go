@@ -1172,7 +1172,10 @@ func (n *Node) SendToHub(msg WSMessage) error {
 	if conn == nil {
 		return fmt.Errorf("not connected to hub")
 	}
-	data, _ := json.Marshal(msg)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal message: %w", err)
+	}
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteMessage(websocket.TextMessage, data)
 }

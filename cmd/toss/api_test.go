@@ -72,7 +72,7 @@ func TestGetStatus(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
-	var status map[string]interface{}
+	var status map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestFileUploadAndDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestDeletePaneCleansUpFiles(t *testing.T) {
 	}
 
 	resp, _ := http.Post(srv.URL+"/api/files", w.FormDataContentType(), &buf)
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +413,7 @@ func TestMultiplePanes(t *testing.T) {
 	srv := testServer(t)
 
 	// Create 3 panes
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		body := `{"name":"Pane","content":"content","language":"plaintext"}`
 		resp, _ := http.Post(srv.URL+"/api/panes", "application/json", strings.NewReader(body))
 		_ = resp.Body.Close()
@@ -928,7 +928,10 @@ func TestClipboardPayloadFilesJSON(t *testing.T) {
 func TestClipboardPayloadFilesOmitEmpty(t *testing.T) {
 	// Text-only payload should not have "files" key
 	payload := ClipboardPayload{Content: "hello", SenderID: "device-1"}
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	if strings.Contains(string(data), `"files"`) {
 		t.Error("files field should be omitted when empty")
 	}

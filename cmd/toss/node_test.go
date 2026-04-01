@@ -326,3 +326,26 @@ func TestSlowClientMissCountResetsOnSuccessfulSend(t *testing.T) {
 		t.Errorf("expected missCount reset to 0 after successful send, got %d", got)
 	}
 }
+
+// ---- receiveClipboardFiles missing file ----
+
+func TestReceiveClipboardFilesMissingFileSkipsGracefully(t *testing.T) {
+	node := testNode(t)
+
+	refs := []ClipboardFileRef{
+		{FileID: "nonexistent-file-id", FileName: "missing.txt", FileSize: 100},
+	}
+
+	// ensureFileLocal will retry 3×500ms = ~1.5s before returning false.
+	// This test verifies receiveClipboardFiles does not panic and writes nothing.
+	node.receiveClipboardFiles(refs, "")
+
+	recvDir := node.store.dir + "/clipboard_received"
+	entries, err := os.ReadDir(recvDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("reading recv dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 files in recv dir, got %d", len(entries))
+	}
+}

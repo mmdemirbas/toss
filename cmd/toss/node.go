@@ -532,6 +532,38 @@ func (n *Node) hubPinger(client *Client) {
 
 // === Spoke Logic ===
 
+func (n *Node) handleSpokeConnErr(err error) {
+	if err == nil {
+		return
+	}
+	log.Printf("[spoke] connection lost: %v", err)
+	if n.hubAddr != "" {
+		SendReverseOffer(n.store.config.DeviceID, n.port, n.hubID)
+	}
+}
+
+func (n *Node) rediscoverHub() bool {
+	log.Println("[spoke] re-discovering hub...")
+	hubAddr, hubID, _ := DiscoverHub(n.store.config.DeviceID, 3*time.Second)
+	if hubAddr == "" {
+		return false
+	}
+	n.roleMu.Lock()
+	n.hubAddr = hubAddr
+	n.hubID = hubID
+	n.roleMu.Unlock()
+	log.Printf("[spoke] found hub at %s", hubAddr)
+	return true
+}
+
+func capBackoff(backoff, max time.Duration) time.Duration {
+	backoff *= 2
+	if backoff > max {
+		return max
+	}
+	return backoff
+}
+
 func (n *Node) runSpoke() {
 	backoff := 1 * time.Second
 	maxBackoff := 15 * time.Second
@@ -548,13 +580,7 @@ func (n *Node) runSpoke() {
 			continue
 		}
 
-		err := n.connectToHub()
-		if err != nil {
-			log.Printf("[spoke] connection lost: %v", err)
-			if n.hubAddr != "" {
-				SendReverseOffer(n.store.config.DeviceID, n.port, n.hubID)
-			}
-		}
+		n.handleSpokeConnErr(n.connectToHub())
 
 		select {
 		case <-n.spokeStop:
@@ -562,30 +588,13 @@ func (n *Node) runSpoke() {
 		case <-time.After(backoff):
 		}
 
-		// Re-discover hub (it may have changed IP or another device became hub)
-		log.Println("[spoke] re-discovering hub...")
-		hubAddr, hubID, _ := DiscoverHub(n.store.config.DeviceID, 3*time.Second)
-		if hubAddr != "" {
-			n.roleMu.Lock()
-			n.hubAddr = hubAddr
-			n.hubID = hubID
-			n.roleMu.Unlock()
-			backoff = 1 * time.Second
-			log.Printf("[spoke] found hub at %s", hubAddr)
-		} else {
-			// No hub found — maybe I should become hub
+		if !n.rediscoverHub() {
 			log.Println("[spoke] no hub found, promoting to hub")
 			n.becomeHub()
 			n.notifySSE()
 			return
 		}
-
-		if backoff < maxBackoff {
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
+		backoff = capBackoff(backoff, maxBackoff)
 	}
 }
 

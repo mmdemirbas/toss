@@ -132,6 +132,10 @@ This tool is **not intended for use over the public internet**.
 - Go 1.22+
 - A LAN where UDP broadcast works (most home/office networks)
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and submission guidelines.
+
 ## License
 
 [MIT](LICENSE)

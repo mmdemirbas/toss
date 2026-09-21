@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a8f98"/>
+    </marker>
+    <marker id="arrow-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 12.5px; }
+      .h { font-size: 16px; font-weight: 700; fill: #111827; }
+      .kind { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; fill: #6b7280; }
+      .name { font-size: 14px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 12.5px; fill: #4b5563; }
+      .cap { font-size: 12.5px; fill: #6b7280; }
+      .lbl { font-size: 12px; fill: #374151; }
+      .num { font-size: 12px; font-weight: 700; fill: #ffffff; }
+    </style>
+  </defs>
+  <rect width="1200" height="460" rx="14" fill="#ffffff" stroke="#e5e7eb"/>
+  <text x="40" y="44" class="h">One LAN, one hub, everyone else a spoke — chosen at start, no configuration</text>
+
+  <!-- hub -->
+  <g transform="translate(470,120)">
+    <rect width="260" height="96" rx="12" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
+    <text x="16" y="24" class="kind">HUB · THE FIRST DEVICE UP</text>
+    <text x="16" y="48" class="name">Laptop</text>
+    <text x="16" y="68" class="sub mono">https://laptop.local:7753</text>
+    <text x="16" y="86" class="sub">serves the UI, relays every change</text>
+  </g>
+
+  <!-- spokes -->
+  <g transform="translate(60,300)">
+    <rect width="240" height="84" rx="12" fill="#f9fafb" stroke="#d1d5db"/>
+    <text x="16" y="24" class="kind">SPOKE</text>
+    <text x="16" y="48" class="name">Phone</text>
+    <text x="16" y="68" class="sub">opens the hub's page in the browser</text>
+  </g>
+  <g transform="translate(480,300)">
+    <rect width="240" height="84" rx="12" fill="#f9fafb" stroke="#d1d5db"/>
+    <text x="16" y="24" class="kind">SPOKE</text>
+    <text x="16" y="48" class="name">Desktop</text>
+    <text x="16" y="68" class="sub">runs toss too; connects out to the hub</text>
+  </g>
+  <g transform="translate(900,300)">
+    <rect width="240" height="84" rx="12" fill="#f9fafb" stroke="#d1d5db"/>
+    <text x="16" y="24" class="kind">SPOKE, BEHIND A FIREWALL</text>
+    <text x="16" y="48" class="name">Work laptop</text>
+    <text x="16" y="68" class="sub">unreachable inbound; hub dials it</text>
+  </g>
+
+  <!-- discovery broadcast -->
+  <g stroke="#8a8f98" stroke-width="1.5" stroke-dasharray="5 4" fill="none" marker-end="url(#arrow)">
+    <path d="M180 298 C 180 240, 400 230, 470 200"/>
+    <path d="M1020 298 C 1020 240, 800 230, 732 200"/>
+  </g>
+  <text x="60" y="244" class="lbl">UDP broadcast: "who is the hub?"</text>
+  <text x="60" y="262" class="lbl">answer: "I am, at :7753"</text>
+  <text x="1010" y="262" class="lbl">"dial me back"</text>
+
+  <!-- sync links -->
+  <g stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrow-b)" marker-start="url(#arrow-b)">
+    <path d="M600 218 L600 298"/>
+  </g>
+  <text x="612" y="262" class="lbl">WSS, both ways</text>
+  <g stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrow-b)">
+    <path d="M730 190 C 820 190, 900 250, 1020 298"/>
+  </g>
+  <text x="760" y="288" class="lbl">hub dials the spoke: WSS</text>
+
+  <!-- steps -->
+  <g transform="translate(40,70)">
+    <circle cx="10" cy="10" r="10" fill="#3b82f6"/><text x="10" y="14" class="num" text-anchor="middle">1</text>
+    <text x="28" y="14" class="lbl">A device starts, broadcasts on UDP :7754 and waits. Silence means it is the hub.</text>
+  </g>
+  <g transform="translate(40,94)">
+    <circle cx="10" cy="10" r="10" fill="#3b82f6"/><text x="10" y="14" class="num" text-anchor="middle">2</text>
+    <text x="28" y="14" class="lbl">Every later device hears the hub's answer and connects to it over TLS WebSocket — outbound only, so firewalls that block incoming ports do not matter.</text>
+  </g>
+
+  <text x="40" y="418" class="cap">Panes, files and clipboard changes travel hub ↔ spoke and are stored on every device under ~/.toss, so a restart shows the same panes.</text>
+  <text x="40" y="436" class="cap">If the hub goes away, a spoke that cannot find one promotes itself; when two hubs meet, the lower device id keeps the role.</text>
+</svg>

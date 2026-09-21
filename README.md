@@ -5,7 +5,7 @@ configuration: start it, open the page, everything you paste is on every screen.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[Documentation](https://mmdemirbas.github.io/toss/) ·
+[Website](https://mmdemirbas.github.io/toss/) ·
 [Source](https://github.com/mmdemirbas/toss) ·
 [Project page](https://mdemirbas.com/en/projects/toss/)
 

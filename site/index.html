@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toss — share text, code, images and files across your local network</title>
+<meta name="description" content="One binary on each device. The first one up becomes the hub, the others find it by broadcast, and every pane is on all of them within the second. No accounts, no configuration.">
+<meta property="og:title" content="Toss — share text, code, images and files across your local network">
+<meta property="og:description" content="One binary on each device. The first one up becomes the hub, the others find it by broadcast, and every pane is on all of them within the second. No accounts, no configuration.">
+<meta property="og:image" content="https://mmdemirbas.github.io/toss/assets/screenshot-markdown.png">
+<link rel="canonical" href="https://mmdemirbas.github.io/toss/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+:root { --accent: #4f46e5; --accent-2: #06b6d4; --accent-on: #ffffff; --accent-ink-on-paper: #3730a3; }
+@media (prefers-color-scheme: dark) { :root { --accent-ink-on-paper: #a5b4fc; } }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#"><span class="mark" aria-hidden="true"></span>Toss</a>
+  <nav><a href="#how" class="">How it works</a><a href="#install" class="">Install</a><a href="#usage" class="hide-sm">Using it</a><a class="gh" href="https://github.com/mmdemirbas/toss" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a></nav>
+</div></header>
+
+<main>
+<section class="hero"><div class="wrap">
+  <p class="eyebrow">Local-network sharing · Go · MIT</p>
+  <h1>The thing you need on the other machine, on the other machine.</h1>
+  <p class="lead">A snippet, a screenshot, a config file, a Wi-Fi password. Toss is one binary that runs on each device on your network: paste it here, it is on every screen within the second. No accounts, no IP addresses, no configuration.</p>
+  <div class="cta"><a class="btn btn-solid" href="#install">Get started</a><a class="btn btn-quiet" href="https://github.com/mmdemirbas/toss" rel=noopener><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Source on GitHub</a></div>
+  <div class="stats"><div><b>1</b><span>binary, everything embedded</span></div><div><b>0</b><span>accounts, addresses, config files</span></div><div><b>&lt; 1 s</b><span>from paste to every device</span></div></div>
+  <div class="visual"><figure class="hero-fig frame window"><div class="bar"><i></i><i></i><i></i></div><img src="assets/screenshot-markdown.png" alt="Toss: a sidebar of panes on the left, a rendered markdown checklist on the right" loading="eager" width="2560" height="1440"></figure></div>
+</div></section>
+
+<section id="why"><div class="wrap">
+  <p class="pitch">Mailing a file to yourself is slow; a chat app puts it on someone's server. <em>Toss keeps it on your network</em> — the first device up becomes the hub, the rest find it by broadcast, and every pane is everywhere.</p>
+  <div class="features" style="margin-top: clamp(1.5rem, 4vw, 2.5rem)"><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M2 9a15 15 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1"/></svg></div><h3>Nothing to set up</h3><p>Devices find each other over UDP broadcast. Start the binary, open the page, done — a phone only needs the browser.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 10 5-10 5L2 7l10-5z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></svg></div><h3>Everything is a pane</h3><p>Text, code with live highlighting, markdown with preview, pasted images, dropped files. Panes title themselves and survive restarts.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>Works through one-way firewalls</h3><p>Spokes connect outbound over TLS WebSocket; a device that cannot be dialled asks the hub to dial it back.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg></div><h3>One binary, all assets inside</h3><p>Go only. The frontend is embedded and vendored — no npm, no network at build time, nothing to install on the other side.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/></svg></div><h3>Clipboard, if you want it</h3><p>Turn on <em>Clipboard → Tabs</em> to make a pane of every copy, or <em>Sync Clipboard</em> to share the clipboard itself.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Mobile friendly</h3><p>Responsive layout, touch targets, a file chooser on the empty pane — the hub's page works on any phone on the network.</p></div></div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <div class="section-head"><h2>One hub, everyone else a spoke</h2><p>Chosen at start, without a line of configuration.</p></div>
+  <div class="how split"><div><figure class="fig frame plain"><img src="assets/topology.svg" alt="One hub, the rest spokes: broadcast to find the hub, TLS WebSocket to sync, reverse dial for a spoke behind a firewall" loading="lazy"></figure><figure class="fig frame window"><div class="bar"><i></i><i></i><i></i></div><img src="assets/screenshot-code.png" alt="A Go snippet in a pane, highlighted" loading="lazy"><figcaption>A code pane: language auto-detected, highlighted as you type.</figcaption></figure></div><ol class="steps"><li><div><b>Start</b><p>A device broadcasts “who is the hub?” on UDP <code>:7754</code> and waits three seconds. Silence means it is the hub: it serves the UI on <code>:7753</code> and relays every change.</p></div></li><li><div><b>Join</b><p>Every later device hears the hub's answer and connects to it over a TLS WebSocket. Outbound only, so firewalls that block incoming ports do not matter.</p></div></li><li><div><b>Reverse dial</b><p>A spoke the hub cannot reach asks the hub to dial it back; the sync channel is the same afterwards.</p></div></li><li><div><b>Lose the hub</b><p>A spoke that cannot find a hub promotes itself. When two hubs meet, the lower device id keeps the role.</p></div></li></ol></div>
+  
+</div></section>
+<section id="install"><div class="wrap">
+  <div class="section-head"><h2>Install</h2><p>Go 1.22 or newer, and a LAN where UDP broadcast works — most home and office networks.</p></div>
+  <div class="install two"><div><h3>Run it</h3><pre class="code"><code>git clone https://github.com/mmdemirbas/toss.git &amp;&amp; cd toss
+task                        <span class="c"># or: go run ./cmd/toss</span>
+
+<span class="c"># then open https://localhost:7753 and accept the</span>
+<span class="c"># self-signed certificate once</span></code></pre><p class=note>Do the same on the next device — or just open the hub's address in a phone's browser.</p></div><div><h3>Build binaries</h3><pre class="code"><code>task build          <span class="c"># this platform → bin/</span>
+task build-all      <span class="c"># macOS, Windows, Linux → bin/</span>
+task test           <span class="c"># tests</span>
+
+./bin/toss -port 8080   <span class="c"># a different port (default 7753)</span></code></pre><p class=note>Everything Toss writes lives under <code>~/.toss/</code>: config, panes, uploaded files, the TLS certificate.</p></div></div>
+</div></section>
+<section id="usage"><div class="wrap">
+  <div class="section-head"><h2>Using it</h2></div>
+  <div class="table-wrap"><table><thead><tr><th>Do</th><th>How</th></tr></thead><tbody><tr><td>New pane</td><td><b>Add Tab</b>, or paste an image / drop a file anywhere</td></tr><tr><td>Code with highlighting</td><td>Pick the language in the pane header, or let auto-detection choose</td></tr><tr><td>Markdown</td><td>Choose <i>markdown</i> and toggle <b>Preview</b>; every code block gets a copy button</td></tr><tr><td>Files on a phone</td><td>The file chooser on the empty pane</td></tr><tr><td>Reorder, rename, delete</td><td>Drag tabs; click the title; the × asks once</td></tr><tr><td>Word wrap</td><td><code>Alt + W</code> in the editor and the preview</td></tr><tr><td>Leave preview</td><td><code>Escape</code></td></tr><tr><td>Hide the sidebar</td><td>The chevron beside the name; the state is remembered</td></tr></tbody></table></div>
+</div></section><section id="security"><div class="wrap">
+  <div class="section-head"><h2>Made for a network you trust</h2><p>Toss has no login: any device on the LAN can read and write panes. That is the point of zero-friction sharing, and the reason it must never face the internet.</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Property</th><th>Setting</th><th>Why</th></tr></thead><tbody><tr><td>Authentication</td><td>None</td><td>Zero-friction sharing on a network you already trust</td></tr><tr><td>WebSocket origin check</td><td>Off</td><td>Any local browser may connect</td></tr><tr><td>Transport</td><td>HTTPS and WSS, self-signed certificate</td><td>No mixed-content warnings; not CA-trusted encryption</td></tr><tr><td>Markdown</td><td>Sanitised with DOMPurify</td><td>No script from a pane</td></tr></tbody></table></div>
+</div></section>
+
+<section id="more"><div class="wrap">
+  <div class="section-head"><h2>Go deeper</h2></div>
+  <div class="links"><a class="link-card" href="https://github.com/mmdemirbas/toss#readme" rel=noopener><b>README</b><span>The full manual: commands, options, what is on disk, security notes.</span><small>GitHub</small></a><a class="link-card" href="https://github.com/mmdemirbas/toss" rel=noopener><b>Source</b><span>One Go package under cmd/toss, the embedded frontend beside it.</span><small>MIT licence</small></a><a class="link-card" href="https://github.com/mmdemirbas/toss/blob/main/CONTRIBUTING.md" rel=noopener><b>Contributing</b><span>Development setup and how to send a change.</span><small>CONTRIBUTING.md</small></a></div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>Toss</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/mmdemirbas/toss" rel="noopener">GitHub</a>
+  <a href="https://mdemirbas.com/en/projects/toss/" rel="noopener">Muhammed Demirbaş</a>
+  <a href="https://mdemirbas.com/" rel="noopener">Other projects</a>
+</div></footer>
+</body>
+</html>

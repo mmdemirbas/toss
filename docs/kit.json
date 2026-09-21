@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/mmdemirbas/oku/main/kit/schema/project-kit.schema.json",
+  "name": "Toss",
+  "description": "Share text, code, images and files between the devices on your local network. Zero configuration.",
+  "accent": "indigo",
+  "audience": "Reader",
+  "domains": ["web"],
+  "lang": "en",
+  "lang_fallback": ["en"],
+  "languages": [{ "code": "en", "label": "English" }],
+  "defaultLanguage": "en",
+  "skip_gitignored": true,
+  "rebuild_command": false
+}

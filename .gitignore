@@ -33,3 +33,8 @@ desktop.ini
 # Syncthing
 .stignore
 .stfolder
+
+# oku docs tree: the kit symlink points at the local install; dist/ is the build
+docs/_oku
+docs/dist/
+tmp/

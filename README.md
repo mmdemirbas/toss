@@ -1,140 +1,115 @@
 # Toss
 
+**Share text, code, images and files between the devices on your local network. Zero
+configuration: start it, open the page, everything you paste is on every screen.**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Share text, code, images, and files between devices on your local network. Zero config.
+[Documentation](https://mmdemirbas.github.io/toss/) ·
+[Source](https://github.com/mmdemirbas/toss) ·
+[Project page](https://mdemirbas.com/en/projects/toss/)
 
-![img.png](assets/img.png)
+![Toss: a sidebar of panes on the left, a rendered markdown checklist on the right](assets/screenshot-markdown.png)
 
-## Quick Start
+The thing you want on the other machine is a snippet, a screenshot, a config file, a Wi-Fi
+password. Mailing it to yourself is slow; a chat app puts it on someone's server. Toss is one
+binary that runs on each device: the first one up becomes the hub, the others find it by
+broadcast, and every pane — text, code with highlighting, markdown with preview, images, files
+— is on all of them within the second.
 
-```bash
-git clone https://github.com/mmdemirbas/toss.git
-cd toss
-task
-```
+- **Nothing to set up** — no accounts, no IP addresses, no config file; devices find each other
+  over UDP broadcast
+- **One binary, all assets inside** — Go only; the frontend is embedded and vendored, no npm, no
+  network at build time
+- **Works through one-way firewalls** — spokes connect outbound; a device that cannot be dialled
+  asks the hub to dial it
+- **Everything is a pane** — paste an image, drop a file, type a note; panes auto-title
+  themselves and survive restarts
+- **Clipboard, optionally** — turn on *Clipboard → Tabs* to make a pane of every copy, *Sync
+  Clipboard* to share the clipboard itself
 
-Open `https://localhost:7753` in your browser (accept the self-signed certificate warning once). That's it.
-
-Only Go is required. All frontend assets are vendored in the repo — no npm, no internet needed at build time.
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `task` | Run the development server (default) |
-| `task build` | Build binary for current platform → `bin/` |
-| `task build-all` | Cross-compile for macOS, Windows, Linux → `bin/` |
-| `task test` | Run tests |
-| `task vendor` | Re-download vendored JS/CSS (only to update lib versions) |
-| `task clean` | Remove build artifacts |
-
-Or use plain Go directly:
+## Quick start
 
 ```bash
-go run ./cmd/toss                        # Run
-go build -o bin/toss ./cmd/toss          # Build
-go test ./cmd/toss                       # Test
+git clone https://github.com/mmdemirbas/toss.git && cd toss
+task                       # or: go run ./cmd/toss
 ```
 
-## Project Structure
+Open `https://localhost:7753`, accept the self-signed certificate once, and do the same on the
+next device. Go 1.22+ is the only requirement, plus a LAN where UDP broadcast works (most home
+and office networks).
 
-```
-cmd/toss/           Go source (package main)
-  web/              Frontend (HTML/JS/CSS, embedded into binary)
-    vendor/         Vendored JS/CSS/fonts (checked into git)
-Taskfile.yml        Build commands (all platforms)
-bin/                Build output (gitignored)
-```
+## How it works
 
-## How It Works
+![One hub, the rest spokes: broadcast to find the hub, TLS WebSocket to sync, reverse dial for a spoke behind a firewall](docs/topology.svg)
 
-1. **First device** starts → becomes the **hub**
-2. **Other devices** start → auto-discover the hub via UDP broadcast, connect as **spokes**
-3. If direct spoke → hub connection is blocked, spoke asks hub to dial back (reverse connect)
-4. All panes sync in real-time across all devices
+1. A device starts, broadcasts on UDP `:7754` and waits three seconds. Silence means it is the
+   hub: it serves the UI on `:7753` and relays every change.
+2. Every later device hears the hub's answer and connects to it over a TLS WebSocket. The
+   connection is outbound, so firewalls that block incoming ports do not matter.
+3. A spoke the hub cannot reach asks the hub to dial it back instead.
+4. If the hub disappears, a spoke that cannot find one promotes itself; when two hubs meet, the
+   lower device id keeps the role.
 
-## Features
+Panes, files and clipboard changes travel hub ↔ spoke and are stored on every device under
+`~/.toss/`, so a restart shows the same panes.
 
-- **Mixed-content panes** — each pane holds text, code, markdown, images, and files
-- **Paste images** — `Ctrl+V` / `Cmd+V` an image from clipboard → instantly shared
-- **Drag & drop files** — drop files into the UI, or use the file chooser on mobile
-- **Syntax highlighting** — live highlighting in the editor with language auto-detection
-- **Markdown preview** — rendered markdown with per-code-block copy buttons
-- **Word wrap toggle** — `Alt+W` to toggle wrap in editor and preview
-- **Tab management** — drag-and-drop reordering, per-tab preview state, inline delete confirmation
-- **Collapsible sidebar** — toggle to save screen space, state persisted
-- **Auto-naming** — panes auto-title from content (respects manual edits)
-- **Multi-device** — not limited to two devices
-- **Auto-discovery** — devices find each other via UDP broadcast, no IP address needed
-- **Dual-direction connect** — handles one-way firewall rules via reverse hub → spoke dialing
-- **HTTPS everywhere** — all traffic (UI, API, inter-node WebSocket) uses TLS with auto-generated self-signed certificates
-- **Offline persistence** — panes persist locally, survive restarts
-- **Mobile friendly** — responsive layout, touch targets, file chooser
+![A Go snippet in a pane, highlighted](assets/screenshot-code.png)
 
-## Architecture
+## Using it
 
-```
-Hub-Spoke with auto-election:
-  ┌─────┐  UDP broadcast    ┌──────┐
-  │Spoke│◄─────────────────►│ Hub  │
-  │:77xx│  WSS (WebSocket)  │:7753 │
-  └─────┘                   └──────┘
-                                ▲
-  ┌─────┐  WSS (WebSocket)      │
-  │Spoke│◄──────────────────────┘
-  │:77xx│
-  └─────┘
-```
-
-- **Hub** runs the HTTPS/WebSocket server and relays changes
-- **Spokes** connect out to the hub (works through firewalls)
-- If no hub exists, the first device self-promotes
-- All communication is outbound from spokes → works even when incoming ports are blocked
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
+| Do | How |
 |---|---|
-| `Alt + W` | Toggle word wrap |
-| `Escape` | Exit preview mode |
+| New pane | **Add Tab**, or paste an image / drop a file anywhere |
+| Code with highlighting | Pick the language in the pane header, or let auto-detection choose |
+| Markdown | Choose *markdown* and toggle **Preview**; every code block gets a copy button |
+| Files on a phone | The file chooser on the empty pane |
+| Reorder, rename, delete | Drag tabs; click the title; the `×` asks once |
+| Word wrap | `Alt + W` in the editor and the preview |
+| Leave preview | `Escape` |
+| Hide the sidebar | The chevron beside the name; the state is remembered |
 
-## Options
+`./bin/toss -port 8080` changes the port (default `7753`).
+
+## Build
+
+```bash
+task                # run the development server
+task build          # binary for this platform → bin/
+task build-all      # macOS, Windows, Linux → bin/
+task test           # tests
+task vendor         # re-download the vendored JS/CSS (only to bump versions)
+```
+
+Plain Go works too: `go run ./cmd/toss`, `go build -o bin/toss ./cmd/toss`, `go test ./cmd/toss`.
 
 ```
-./bin/toss -port 8080       # Use a different port (default: 7753)
+cmd/toss/          Go source (package main)
+  web/             Frontend (HTML/JS/CSS), embedded into the binary
+    vendor/        Vendored JS/CSS/fonts, checked in
+Taskfile.yml       Build commands
 ```
 
-All traffic uses HTTPS with an auto-generated self-signed certificate stored in `~/.toss/certs/`. On first access, your browser will show a certificate warning — accept it once to proceed.
+## What is on disk
 
-## Data Storage
+Under `~/.toss/`: `config.json` (device id and name), `panes.json` (every pane), `files/`
+(uploads) and `certs/` (the self-signed TLS certificate and key, generated on first run).
 
-All data is stored in `~/.toss/`:
-- `config.json` — device ID and name
-- `panes.json` — all pane content
-- `files/` — uploaded files and images
-- `certs/` — auto-generated TLS certificate and key
+## Security
 
-## Security Notes
+Toss is for **trusted local networks** and is not meant to face the internet.
 
-Toss is designed for **trusted local networks**.
-
-- **No authentication.** Any device on the LAN can connect and read/write panes. This is by design for zero-friction LAN sharing.
-- **WebSocket origin checks are disabled** to allow access from any local browser.
-- **CORS is permissive** (`Access-Control-Allow-Origin: *`) on the SSE endpoint for the same reason.
-- **Self-signed HTTPS** is used for all traffic to avoid browser mixed-content warnings, but does not provide CA-trusted encryption.
-- **Markdown content is sanitized** with DOMPurify before rendering to prevent XSS.
-
-This tool is **not intended for use over the public internet**.
-
-## Requirements
-
-- Go 1.22+
-- A LAN where UDP broadcast works (most home/office networks)
+- No authentication: any device on the LAN can read and write panes. That is the point of
+  zero-friction sharing, and the reason for the line above.
+- WebSocket origin checks are off and the SSE endpoint answers CORS `*`, so any local browser
+  can connect.
+- All traffic is HTTPS and WSS with a self-signed certificate — no mixed-content warnings, but
+  no CA-trusted encryption either.
+- Markdown is sanitised with DOMPurify before rendering.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and submission guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

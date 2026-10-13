@@ -13,6 +13,12 @@ task vendor       # Re-download vendored JS/CSS libs (highlight.js, marked.js, D
 task clean        # Remove build artifacts
 ```
 
+`./ctl` offers the same under the shared verbs for the ajans board (`ajans.toml`
+declares them; `./ctl --list` prints them): `./ctl dev`, `build`, `build dist`,
+`test`, `check` (`task quality`, after `./ctl --check`), `vendor`, `clean`, and
+`./ctl deploy release [major|minor|patch|vX.Y.Z]`, which runs the gate, then tags
+and pushes; the release workflow publishes on the tag.
+
 Run a single test:
 ```bash
 go test ./cmd/toss -run TestName

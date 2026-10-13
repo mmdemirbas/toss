@@ -5,12 +5,13 @@ contract = 2
 deploy = "Publish toss"
 
 # HTTPS with a self-signed certificate, on every interface: toss is for sharing
-# across a LAN, by design. The board checks the port, since a plain HTTP probe
-# cannot speak to it.
+# across a LAN, by design. / is the embedded web UI, a static file.
 [operations.dev]
 summary = "Run the server from source on https://localhost:7753 (all interfaces, for the LAN)"
 lifecycle = "service"
 port = 7753
+tls = true
+health = { path = "/" }
 
 [operations.build]
 summary = "Build bin/toss for this machine"
